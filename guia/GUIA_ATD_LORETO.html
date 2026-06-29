@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Guia ATD — Loreto — GFP Subnacional</title>
+<style>
+  :root { --azul:#2F5F8F; --rojo:#C41E3A; --gris:#F4F6F8; --borde:#B8C8D8; --texto:#1A2B3C; --dim:#5A6B7D; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:Arial,sans-serif; color:var(--texto); background:#fff; font-size:14px; line-height:1.6; }
+  header { color:#fff; padding:28px 40px 20px; }
+  header h1 { font-size:22px; }
+  header p { margin-top:4px; font-size:13px; opacity:.9; }
+  .container { max-width:900px; margin:0 auto; padding:30px 20px 60px; }
+  h2 { font-size:17px; color:var(--azul); border-left:4px solid var(--rojo); padding-left:10px; margin:32px 0 12px; }
+  h3 { font-size:14px; font-weight:bold; margin:18px 0 6px; }
+  .step { display:flex; gap:14px; margin-bottom:10px; }
+  .step .num { min-width:28px; height:28px; border-radius:50%; background:var(--azul); color:#fff; font-weight:bold; font-size:13px; display:flex; align-items:center; justify-content:center; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th { background:var(--azul); color:#fff; text-align:left; padding:7px 10px; }
+  td { border:1px solid var(--borde); padding:6px 10px; vertical-align:top; }
+  tr:nth-child(even) td { background:var(--gris); }
+  .box { background:var(--gris); border:1px solid var(--borde); border-radius:6px; padding:14px 16px; margin:12px 0; }
+  .box.warn { border-color:var(--rojo); background:#fff5f5; }
+  .box.ok { border-color:#2e7d32; background:#f5fdf6; }
+  code { font-family:Consolas,monospace; font-size:12.5px; color:var(--azul); background:#dde4ec; padding:1px 5px; border-radius:3px; }
+  .tree { background:#1A2B3C; color:#c8d8ea; padding:14px 18px; border-radius:6px; font-family:Consolas,monospace; font-size:12px; line-height:1.8; margin:10px 0; }
+  footer { background:var(--azul); color:#c8d8ea; text-align:center; padding:16px; font-size:12px; margin-top:40px; }
+</style>
+</head>
+<body>
+<header style="background:#1565C0">
+  <h1>ATD Toolbox — Loreto</h1>
+  <p>GFP Subnacional | Paquete regional | ArcGIS Pro 3.x</p>
+</header>
+<div class="container">
+
+<h2>1. Estructura de esta carpeta</h2>
+<div class="tree">
+ATD_Loreto/<br>
+├── toolbox/ &nbsp; H1 · H2 · H3<br>
+├── GDB/ &nbsp; Linea_base_deforestación_Loreto.gdb<br>
+├── logos/ &nbsp; Solo logos de Loreto + GFP/SECO/Basel<br>
+├── guia/ &nbsp; Este documento<br>
+├── pdfs/ · imagenes_sentinel/ · mapas/ · documentacion_atd/
+</div>
+
+<div class="box warn">
+<strong>Importante:</strong> Trabaje siempre desde la carpeta <code>ATD_Loreto</code> completa.
+No mueva solo el toolbox ni renombre la carpeta raiz.
+</div>
+
+<h2>2. Requisitos</h2>
+<div class="box">
+ArcGIS Pro 3.x · Python arcgispro-py3 con:
+<code>geopandas fiona pandas numpy matplotlib Pillow pyproj reportlab requests</code>
+</div>
+
+<h2>3. Agregar toolbox en ArcGIS Pro</h2>
+<div class="step"><div class="num">1</div><div>Crear o abrir proyecto en Pro.</div></div>
+<div class="step"><div class="num">2</div><div>Catalog → Toolboxes → Add Toolbox.</div></div>
+<div class="step"><div class="num">3</div><div>Agregar los tres archivos en <code>toolbox/</code>:
+<code>ATD_H1_Descargas_Geo_Bosques.pyt</code>,
+<code>ATD_H2_VisorSatelital.pyt</code>,
+<code>ATD_H3_Reporte_PDF.pyt</code></div></div>
+<div class="step"><div class="num">4</div><div>Tras actualizar codigo: quitar y volver a agregar el toolbox.</div></div>
+
+<h2>4. GDB y capas de alertas</h2>
+<table>
+<tr><th>Item</th><th>Valor</th></tr>
+<tr><td>GDB principal</td><td><code>GDB/Linea_base_deforestación_Loreto.gdb</code></td></tr>
+<tr><td>FC alertas</td><td><code>MonitoreoDeforestacion</code></td></tr>
+</table>
+
+<h2>5. ACRs de Loreto</h2>
+<table>
+<tr><th>Codigo</th><th>Nombre</th></tr>
+<tr><td><code>ACR09</code></td><td>ACR Ampiyacu Apayacu</td></tr><tr><td><code>ACR04</code></td><td>ACR Comunal Tamshiyacu Tahuayo</td></tr><tr><td><code>ACR17</code></td><td>ACR Maijuna Kichwa</td></tr><tr><td><code>ACR10</code></td><td>ACR Alto Nanay Pintuyacu Chambira</td></tr>
+</table>
+
+<h2>6. Flujo de trabajo</h2>
+<div class="step"><div class="num">1</div><div><strong>H1</strong> — Descargar Geobosques e insertar alertas en la GDB.</div></div>
+<div class="step"><div class="num">2</div><div><strong>H2</strong> — Visor satelital: fotointerpretacion antes/despues → <code>imagenes_sentinel/</code>.</div></div>
+<div class="step"><div class="num">3</div><div><strong>H3</strong> — Diagnostico Pre-Vuelo, luego Generar Reporte ATD → <code>pdfs/</code>.</div></div>
+
+<h2>7. Logos incluidos</h2>
+<table><tr><th>Archivo en logos/</th></tr><tr><td><code>logo_gore.png</code></td></tr><tr><td><code>logo_grrnga.png</code></td></tr><tr><td><code>logo_anp_ACR04.jpeg</code></td></tr><tr><td><code>logo_anp_ACR09.jpeg</code></td></tr><tr><td><code>logo_anp_ACR10.png</code></td></tr><tr><td><code>logo_anp_ACR17.jpeg</code></td></tr><tr><td><code>logo_gfp.png</code></td></tr><tr><td><code>logo_SECO.jpg</code></td></tr><tr><td><code>logo_basel.png</code></td></tr></table>
+
+<h2>8. Problemas frecuentes</h2>
+<table>
+<tr><th>Sintoma</th><th>Solucion</th></tr>
+<tr><td>ArcGIS Pro se cierra al generar PDF</td><td>Ver <code>guia/ATD_SI_SE_CIERRA_PRO.md</code>. Usar Modo estable o subproceso en H3.</td></tr>
+<tr><td>No hay alertas en el periodo</td><td>Ejecutar Diagnostico Pre-Vuelo con las mismas fechas y GDB.</td></tr>
+<tr><td>Logo no aparece en PDF</td><td>Verificar archivo en <code>logos/</code> con nombre de la tabla arriba.</td></tr>
+<tr><td>Toolbox en rojo</td><td><code>atd_region_config.py</code> debe estar junto a los .pyt en toolbox/.</td></tr>
+<tr><td>Imagenes borrosas en H2</td><td>Usar buffer 2 km, cargar ANTES y DESPUES, revisar red.</td></tr>
+<tr><td>GEE no funciona en H3</td><td>Normal: GEE en H3 esta desactivado. Use H2 para imagenes.</td></tr>
+</table>
+
+<h2>9. Notas de esta region</h2>
+<ul><li>Incluye GDB de gestion (GestionACR) para Lugar poblado y OLV en el PDF.</li><li>Descarga Geobosques (H1) inserta en MonitoreoDeforestacion (vigente).</li><li>Historico 2001-2025 en MonitoreoDeforestacionAcumulado.</li><li>Campo zona_influencia (Zona de Influencia) en ambas capas.</li></ul>
+
+<div class="box ok">
+<strong>Listo para demo:</strong> Abra un PDF de ejemplo en <code>pdfs/</code> si ya genero reportes de prueba.
+</div>
+
+</div>
+<footer>ATD Loreto | GFP Subnacional 2026</footer>
+</body>
+</html>

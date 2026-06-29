@@ -1,0 +1,24 @@
+# Salidas generadas por el usuario (no versionar en git)
+pdfs/*.pdf
+imagenes_sentinel/*
+!imagenes_sentinel/.gitkeep
+mapas/*
+!mapas/.gitkeep
+documentacion_atd/*
+!documentacion_atd/.gitkeep
+
+# Demo institucional (sí versionar)
+!docs/
+!docs/EJEMPLO_reporte_ATD_Loreto.pdf
+
+# Mantener carpetas vacías
+!pdfs/.gitkeep
+
+# Python / ArcGIS
+__pycache__/
+*.pyc
+*.pyt.xml
+
+# Locks ArcGIS
+*.lock
+*.gdb.lock

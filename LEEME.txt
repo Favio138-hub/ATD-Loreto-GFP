@@ -1,0 +1,43 @@
+ATD GFP Subnacional — Loreto
+==================================================
+
+Carpeta de trabajo para la region Loreto.
+Abra esta carpeta completa en ArcGIS Pro (no mueva solo el toolbox).
+
+ESTRUCTURA
+----------
+  toolbox/              Herramientas H1, H2, H3
+  GDB/                  Geodatabases de linea base
+  logos/                Logos institucionales de esta region
+  guia/                 Guia HTML y solucion de problemas
+  pdfs/                 Reportes PDF generados
+  imagenes_sentinel/    Imagenes del visor H2
+  mapas/                Mapas exportados
+  documentacion_atd/    HTML metodologia y swipe
+
+GDB PRINCIPAL
+-------------
+  GDB/Linea_base_deforestación_Loreto.gdb
+  FC alertas: MonitoreoDeforestacionAcumulado
+
+ACRs EN ESTE PAQUETE
+--------------------
+  - ACR09: ACR Ampiyacu Apayacu
+  - ACR04: ACR Comunal Tamshiyacu Tahuayo
+  - ACR17: ACR Maijuna Kichwa
+  - ACR10: ACR Alto Nanay Pintuyacu Chambira
+
+INICIO RAPIDO
+-------------
+  1. ArcGIS Pro > Catalog > Add Toolbox > toolbox/ATD_H1... ATD_H2... ATD_H3...
+  2. Lea guia/GUIA_ATD_LORETO.html
+  3. H3: ejecutar Diagnostico Pre-Vuelo, luego Generar Reporte ATD
+
+NOTAS
+-----
+  * Incluye GDB de gestion (GestionACR) para Lugar poblado y OLV en el PDF.
+  * Historico 2001-2025 en MonitoreoDeforestacionAcumulado; alertas 2026 en MonitoreoDeforestacion.
+  * Campo zona_influencia (Zona de Influencia) en ambas capas.
+
+Si ArcGIS Pro se cierra: guia/ATD_SI_SE_CIERRA_PRO.md
+Diagnostico Python: ejecutar DIAGNOSTICO_ENTORNO.bat en esta carpeta

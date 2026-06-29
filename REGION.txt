@@ -1,0 +1,3 @@
+region=loreto
+titulo=Loreto
+paquete=ATD_Loreto
