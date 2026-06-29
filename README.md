@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="logos/logo_gfp.png" alt="GFP Subnacional" width="220"/>
+  <img src="logos/logo_gfp.png" alt="GFP Subnacional" height="88" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="logos/logo_SECO.jpg" alt="SECO — Suiza en el Perú" height="72" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="logos/logo_basel.png" alt="Basel Institute on Governance" height="72" />
 </p>
 
 <p align="center">
-  <img src="logos/logo_gore.png" alt="GORE Loreto" height="56"/>
+  <img src="logos/logo_gore.png" alt="Gobierno Regional de Loreto" height="52" />
   &nbsp;&nbsp;&nbsp;
-  <img src="logos/logo_grrnga.png" alt="GRRNGA Loreto" height="56"/>
-  &nbsp;&nbsp;&nbsp;
-  <img src="logos/logo_SECO.jpg" alt="SECO" height="44"/>
-  &nbsp;&nbsp;&nbsp;
-  <img src="logos/logo_basel.png" alt="Basel Institute" height="44"/>
+  <img src="logos/logo_grrnga.png" alt="GRRNGA Loreto" height="52" />
 </p>
 
 <h1 align="center">ATD Toolbox — Loreto</h1>
