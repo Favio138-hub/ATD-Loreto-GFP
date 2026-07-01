@@ -800,14 +800,33 @@ def _sentinel_wms_url(bbox_wgs84, fecha_str, size=512):
 
 # ─── BBOX CON BUFFER ──────────────────────────────────────────────────────────
 
+def _parse_float_locale(valor):
+    """Acepta 1.5 y 1,5 (configuración regional Windows / Tk Spinbox)."""
+    if valor is None:
+        return None
+    s = str(valor).strip()
+    if not s:
+        return None
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 def _normalizar_buffer_km(valor):
     """
     Buffer en kilómetros (máx 25).
     Si el usuario escribe >100 asume metros (ej. 4000 → 4 km).
     """
-    try:
-        v = float(valor)
-    except Exception:
+    v = _parse_float_locale(valor)
+    if v is None:
         return BUFFER_KM_DEFAULT
     if v > 100:
         v = v / 1000.0
@@ -2455,12 +2474,15 @@ class VisorATD:
         fb2.pack(fill="x", padx=10, pady=(2, 4))
         tk.Label(fb2, text="Buffer (km):", bg=C["panel"], fg=C["dim"],
                  font=("Consolas", 8)).pack(side="left")
-        self.v_buffer = tk.DoubleVar(value=BUFFER_KM_DEFAULT)
-        tk.Spinbox(fb2, from_=0.2, to=BUFFER_KM_MAX, increment=0.5,
-                   textvariable=self.v_buffer,
-                   width=6, bg=C["card"], fg=C["azul"],
-                   font=("Consolas", 9), relief="flat",
-                   buttonbackground=C["card"]).pack(side="left", padx=4)
+        self.v_buffer = tk.StringVar(
+            value=f"{BUFFER_KM_DEFAULT:g}".replace(",", "."))
+        self.spin_buffer = tk.Spinbox(
+            fb2, from_=0.2, to=BUFFER_KM_MAX, increment=0.5,
+            textvariable=self.v_buffer,
+            width=6, bg=C["card"], fg=C["azul"],
+            font=("Consolas", 9), relief="flat",
+            buttonbackground=C["card"])
+        self.spin_buffer.pack(side="left", padx=4)
         tk.Label(fb2, text="máx 25 · 4000=m→4km", bg=C["panel"],
                  fg=C["dim"], font=("Consolas", 6)).pack(side="left")
 
@@ -2764,16 +2786,36 @@ class VisorATD:
         self.log_txt.config(state="disabled")
         self.root.update_idletasks()
 
+    def _leer_texto_buffer(self):
+        for fuente in (
+            getattr(self, "spin_buffer", None),
+            getattr(self, "v_buffer", None),
+        ):
+            if fuente is None:
+                continue
+            try:
+                txt = fuente.get() if hasattr(fuente, "get") else None
+                if txt is not None and str(txt).strip():
+                    return str(txt).strip()
+            except tk.TclError:
+                continue
+            except Exception:
+                continue
+        return f"{BUFFER_KM_DEFAULT:g}"
+
     def _get_buffer_km(self):
-        raw = self.v_buffer.get()
+        raw = self._leer_texto_buffer()
         norm = _normalizar_buffer_km(raw)
-        if abs(float(raw) - norm) > 0.05:
-            self.v_buffer.set(norm)
-            self._log(
-                f"Buffer corregido: {raw} → {norm:.2f} km "
-                f"(el campo es en km; 4000 m = 4 km)",
-                "warn",
-            )
+        raw_f = _parse_float_locale(raw)
+        if raw_f is None or abs(raw_f - norm) > 0.05:
+            txt_norm = f"{norm:g}".replace(",", ".")
+            self.v_buffer.set(txt_norm)
+            if raw_f is not None and abs(raw_f - norm) > 0.05:
+                self._log(
+                    f"Buffer corregido: {raw} → {norm:.2f} km "
+                    f"(el campo es en km; 4000 m = 4 km)",
+                    "warn",
+                )
         return norm
 
     def _bbox_imagen_alerta(self, buffer_km=None):
