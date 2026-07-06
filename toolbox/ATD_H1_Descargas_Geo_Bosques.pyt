@@ -179,8 +179,8 @@ def _dominio_md_zonif(gdb, fc_dest):
 
 def _asegurar_dominio_zonif(gdb, fc_dest, fc_zon, campo_zon):
     """
-    Completa el dominio de md_zonif si esta vacio (caso Cuzco/San Martin).
-    Sin valores en el dominio, ArcGIS Pro bloquea la edicion en tabla de atributos.
+    Asegura codigos PE/S/AD/... en el dominio md_zonif.
+    Nunca agrega textos largos (causaban insertRow NULL en ACR04/ACR10).
     """
     dom_name = _dominio_md_zonif(gdb, fc_dest)
     if not dom_name:
@@ -191,48 +191,87 @@ def _asegurar_dominio_zonif(gdb, fc_dest, fc_zon, campo_zon):
     if not dom or dom.domainType != "CodedValue":
         return
 
-    existentes = set((dom.codedValues or {}).keys())
-    nuevos = []
+    existentes = {str(k).strip() for k in (dom.codedValues or {})}
+    existentes |= {str(v).strip().lower() for v in (dom.codedValues or {}).values()}
 
-    if campo_zon and arcpy.Exists(fc_zon):
-        with arcpy.da.SearchCursor(fc_zon, [campo_zon]) as cur:
-            for row in cur:
-                val = str(row[0] or "").strip()
-                if val and val not in existentes:
-                    nuevos.append(val)
-                    existentes.add(val)
-
-    if arcpy.Exists(fc_dest):
-        with arcpy.da.SearchCursor(fc_dest, ["md_zonif"]) as cur:
-            for row in cur:
-                val = str(row[0] or "").strip()
-                if val and val not in existentes:
-                    nuevos.append(val)
-                    existentes.add(val)
-
-    if not nuevos and existentes:
-        return
-
-    if not existentes and not nuevos:
-        arcpy.AddWarning(
-            f"   Dominio '{dom_name}' sin valores. "
-            "Revise gpo_zonif_anp (campo z_tipo).")
-        return
-
-    for val in sorted(set(nuevos)):
+    # Codigos estandar del dominio institucional
+    estandar = {
+        "PE": "Zona de Protección Estricta",
+        "S": "Zona Silvestre",
+        "REC": "Zona de Recuperación",
+        "HC": "Zona Histórico Cultural",
+        "AD": "Zona de Aprovechamiento Directo",
+        "UE": "Zona de Uso Especial",
+        "T": "Zona de Uso Turístico y Recreativo",
+        "No Zonificado": "No Zonificado",
+    }
+    for code, desc in estandar.items():
+        if code in existentes:
+            continue
         try:
-            arcpy.management.AddCodedValueToDomain(
-                gdb, dom_name, val, val)
-            arcpy.AddMessage(
-                f"   Dominio zonificacion: agregado '{val}'")
-        except Exception as e:
-            arcpy.AddWarning(
-                f"   No se pudo agregar '{val}' al dominio: {e}")
+            arcpy.management.AddCodedValueToDomain(gdb, dom_name, code, desc)
+            arcpy.AddMessage(f"   Dominio zonificacion: codigo '{code}'")
+            existentes.add(code)
+        except Exception:
+            pass
+
+
+_ZONIF_TEXTO_A_CODIGO = {
+    "zona de proteccion estricta": "PE",
+    "zona de protección estricta": "PE",
+    "zona silvestre": "S",
+    "zona de recuperacion": "REC",
+    "zona de recuperación": "REC",
+    "zona historico cultural": "HC",
+    "zona histórico cultural": "HC",
+    "zona de aprovechamiento directo": "AD",
+    "zona de uso especial": "UE",
+    "zona de uso turistico y recreativo": "T",
+    "zona de uso turístico y recreativo": "T",
+    "no zonificado": "No Zonificado",
+}
+
+
+def _codigo_zonif_dominio(gdb, fc_dest, valor):
+    """
+    Convierte texto de zonificacion (tz_nomb) al codigo del dominio md_zonif.
+    Evita ERROR al insertar en ANPCH/otras ACR cuando el dominio exige PE/S/AD/...
+    """
+    val = str(valor or "").strip()
+    if not val:
+        return None
+    if val.lower() in ("nan", "none", "null", "-", " "):
+        return None
+
+    dom_name = _dominio_md_zonif(gdb, fc_dest)
+    coded = {}
+    if dom_name:
+        try:
+            for dom in arcpy.da.ListDomains(gdb):
+                if dom.name == dom_name and dom.domainType == "CodedValue":
+                    coded = {str(k).strip(): str(v).strip()
+                             for k, v in (dom.codedValues or {}).items()}
+                    break
+        except Exception:
+            coded = {}
+
+    if val in coded:
+        return val
+    for code, desc in coded.items():
+        if desc.lower() == val.lower():
+            return code
+
+    mapped = _ZONIF_TEXTO_A_CODIGO.get(val.lower())
+    if mapped and (not coded or mapped in coded):
+        return mapped
+    if mapped:
+        return mapped
+    return val
 
 
 def _asegurar_valor_zonif_en_dominio(gdb, fc_dest, valor):
     """Agrega un valor de zonificacion al dominio si aun no existe."""
-    val = str(valor or "").strip()
+    val = _codigo_zonif_dominio(gdb, fc_dest, valor) or str(valor or "").strip()
     if not val:
         return
     dom_name = _dominio_md_zonif(gdb, fc_dest)
@@ -251,6 +290,192 @@ def _asegurar_valor_zonif_en_dominio(gdb, fc_dest, valor):
             return
     except Exception:
         pass
+
+
+def _buscar_sector_alerta(geom, fc_sectores, cod_acr):
+    """Nombre del sector desde gpo_sectores (Sectores.shp)."""
+    if not geom or not fc_sectores or not arcpy.Exists(fc_sectores):
+        return None
+    campos = {f.name.lower(): f.name for f in arcpy.ListFields(fc_sectores)}
+    nom_col = campos.get("sector_nom") or campos.get("nombre") or campos.get("sectores")
+    if not nom_col:
+        return None
+    cod_col = campos.get("acr_codi") or campos.get("anp_codi")
+    lyr = "__lyr_sectores_atd__"
+    try:
+        if arcpy.Exists(lyr):
+            arcpy.management.Delete(lyr)
+        where = None
+        if cod_col and cod_acr:
+            where = (
+                f"{arcpy.AddFieldDelimiters(fc_sectores, cod_col)} = "
+                f"'{str(cod_acr).replace(chr(39), chr(39)+chr(39))}'"
+            )
+        arcpy.management.MakeFeatureLayer(fc_sectores, lyr, where)
+        for metodo in ("INTERSECT", "WITHIN"):
+            arcpy.management.SelectLayerByLocation(
+                lyr, metodo, geom, selection_type="NEW_SELECTION")
+            if int(arcpy.management.GetCount(lyr)[0]) == 0:
+                continue
+            with arcpy.da.SearchCursor(lyr, [nom_col]) as sc:
+                for (val,) in sc:
+                    txt = str(val or "").strip()
+                    if txt and txt.lower() not in ("nan", "none", "null", "-", " "):
+                        return txt
+    except Exception:
+        pass
+    finally:
+        try:
+            if arcpy.Exists(lyr):
+                arcpy.management.Delete(lyr)
+        except Exception:
+            pass
+    return None
+
+
+def _asegurar_campo_md_sector(fc_dest):
+    names = {f.name.lower() for f in arcpy.ListFields(fc_dest)}
+    if "md_sector" in names:
+        return
+    try:
+        arcpy.management.AddField(
+            fc_dest, "md_sector", "TEXT", field_length=150,
+            field_alias="Sector ACR",
+        )
+        arcpy.AddMessage("   Campo md_sector creado (Sector ACR)")
+    except Exception as ex:
+        arcpy.AddWarning(f"   No se pudo crear md_sector: {ex}")
+
+
+def _mapa_oid_desde_spatial_join(fc_alertas, fc_ref, campo_ref, where_alertas=None):
+    """
+    Un solo SpatialJoin: {OBJECTID alerta: valor}.
+    Evita SelectLayerByLocation por cada fila (era la causa de la lentitud).
+    """
+    if not fc_ref or not arcpy.Exists(fc_ref) or not campo_ref:
+        return {}
+    campos_ref = {f.name.lower(): f.name for f in arcpy.ListFields(fc_ref)}
+    if campo_ref.lower() not in campos_ref:
+        return {}
+    campo_ok = campos_ref[campo_ref.lower()]
+    oid_name = arcpy.Describe(fc_alertas).OIDFieldName
+    lyr = "__h1_sj_lyr__"
+    out_sj = "in_memory\\h1_sj_tmp"
+    out_map = {}
+    try:
+        if arcpy.Exists(lyr):
+            arcpy.management.Delete(lyr)
+        arcpy.management.MakeFeatureLayer(fc_alertas, lyr, where_alertas)
+        if int(arcpy.management.GetCount(lyr)[0]) == 0:
+            return {}
+        _borrar_fc(out_sj)
+        arcpy.analysis.SpatialJoin(
+            lyr, fc_ref, out_sj,
+            join_operation="JOIN_ONE_TO_ONE",
+            join_type="KEEP_ALL",
+            match_option="INTERSECT",
+        )
+        # Campo puede venir como sector_nom o sector_nom_1
+        sj_fields = {f.name.lower(): f.name for f in arcpy.ListFields(out_sj)}
+        val_col = None
+        for cand in (campo_ok, campo_ok + "_1", campo_ok[:8], campo_ok[:6]):
+            if cand.lower() in sj_fields:
+                val_col = sj_fields[cand.lower()]
+                break
+        if not val_col:
+            for name in sj_fields:
+                if campo_ok.lower() in name:
+                    val_col = sj_fields[name]
+                    break
+        if not val_col:
+            return {}
+        # TARGET_FID suele conservar el OID original
+        tid = "TARGET_FID" if "target_fid" in sj_fields else oid_name
+        if tid.lower() not in sj_fields:
+            tid = sj_fields.get(oid_name.lower(), oid_name)
+        else:
+            tid = sj_fields[tid.lower()]
+        with arcpy.da.SearchCursor(out_sj, [tid, val_col]) as cur:
+            for oid, val in cur:
+                txt = str(val or "").strip()
+                if not txt or txt.lower() in ("nan", "none", "null", "-", " "):
+                    continue
+                if oid is not None:
+                    out_map[int(oid)] = txt
+    except Exception:
+        return {}
+    finally:
+        for p in (lyr, out_sj):
+            try:
+                if arcpy.Exists(p):
+                    arcpy.management.Delete(p)
+            except Exception:
+                pass
+    return out_map
+
+
+def _enriquecer_alertas_batch(
+    fc_dest, gdb, anno, fc_zon, campo_tz, fc_sectores, fc_exa, col_fi, msg_fn,
+):
+    """Rellena md_sector, md_zonif y md_exa en una pasada (rapido)."""
+    msg = msg_fn or (lambda *a, **k: None)
+    campos = {f.name.lower(): f.name for f in arcpy.ListFields(fc_dest)}
+    oid_name = arcpy.Describe(fc_dest).OIDFieldName
+    where = f"{campos.get('md_anno', 'md_anno')} = {int(anno)}"
+    n_sec = n_zon = n_exa = 0
+
+    mapa_sec = {}
+    if fc_sectores and arcpy.Exists(fc_sectores) and "md_sector" in campos:
+        mapa_sec = _mapa_oid_desde_spatial_join(
+            fc_dest, fc_sectores, "sector_nom", where)
+        msg(f"   Sector (batch): {len(mapa_sec)} alertas")
+
+    mapa_zon = {}
+    if fc_zon and arcpy.Exists(fc_zon) and campo_tz and "md_zonif" in campos:
+        mapa_zon_raw = _mapa_oid_desde_spatial_join(
+            fc_dest, fc_zon, campo_tz, where)
+        for oid, txt in mapa_zon_raw.items():
+            code = _codigo_zonif_dominio(gdb, fc_dest, txt)
+            if code:
+                mapa_zon[oid] = code
+        msg(f"   Zonif (batch): {len(mapa_zon)} alertas")
+
+    mapa_exa = {}
+    if fc_exa and arcpy.Exists(fc_exa) and col_fi and "md_exa" in campos:
+        mapa_exa = _mapa_oid_desde_spatial_join(
+            fc_dest, fc_exa, col_fi, where)
+        msg(f"   EXA (batch): {len(mapa_exa)} alertas")
+
+    if not (mapa_sec or mapa_zon or mapa_exa):
+        return 0, 0, 0
+
+    upd = [oid_name]
+    i_sec = i_zon = i_exa = None
+    if mapa_sec and "md_sector" in campos:
+        i_sec = len(upd)
+        upd.append(campos["md_sector"])
+    if mapa_zon and "md_zonif" in campos:
+        i_zon = len(upd)
+        upd.append(campos["md_zonif"])
+    if mapa_exa and "md_exa" in campos:
+        i_exa = len(upd)
+        upd.append(campos["md_exa"])
+
+    with arcpy.da.UpdateCursor(fc_dest, upd, where) as cur:
+        for row in cur:
+            oid = int(row[0])
+            row = list(row)
+            if i_sec is not None and oid in mapa_sec:
+                row[i_sec] = mapa_sec[oid][:150]
+                n_sec += 1
+            if i_zon is not None and oid in mapa_zon:
+                row[i_zon] = mapa_zon[oid]
+                n_zon += 1
+            if i_exa is not None and oid in mapa_exa:
+                row[i_exa] = mapa_exa[oid]
+                n_exa += 1
+            cur.updateRow(row)
+    return n_sec, n_zon, n_exa
 
 
 def _buscar_espacial(geom, fc_ref, campo_val):
@@ -1170,7 +1395,7 @@ class InsertarAlertas(object):
 
         try:
             msg("=" * 65)
-            msg(f"ATD H1 v5.7 — INSERTAR ALERTAS {anno}")
+            msg(f"ATD H1 v5.8 — INSERTAR ALERTAS {anno}")
             msg(f"GFP Subnacional - {REGION_NOMBRE}")
             msg("=" * 65)
             msg(f"   GDB destino  : {gdb}")
@@ -1373,6 +1598,14 @@ class InsertarAlertas(object):
             msg("[7/7] Procesando areas — Clip + Insercion en FC destino...")
             msg("")
 
+            _asegurar_campo_md_sector(fc_dest)
+            fc_sectores = os.path.join(gdb, "gpo_sectores")
+            if not arcpy.Exists(fc_sectores):
+                fc_sectores = None
+                arcpy.AddWarning(
+                    "   gpo_sectores no existe — Sector quedará vacío. "
+                    "Ejecute scripts/actualizar_sectores_putumayo_loreto.py")
+
             _campos_cfg = [
                 ("SHAPE@",    True),
                 ("anp_codi",  True),
@@ -1386,6 +1619,7 @@ class InsertarAlertas(object):
                 ("md_norte",  False),
                 ("md_exa",    False),
                 ("md_zonif",  False),
+                ("md_sector", False),
                 ("md_mesrep", False),
                 ("md_fecini", False),   # NEW v5.1
                 ("md_fecfin", False),   # NEW v5.1
@@ -1426,6 +1660,7 @@ class InsertarAlertas(object):
             i_nor   = _idx("md_norte")
             i_exa   = _idx("md_exa")
             i_zon   = _idx("md_zonif")
+            i_sect  = _idx("md_sector")
             i_mes   = _idx("md_mesrep")
             i_fini  = _idx("md_fecini")   # NEW v5.1
             i_ffin  = _idx("md_fecfin")   # NEW v5.1
@@ -1434,13 +1669,30 @@ class InsertarAlertas(object):
             mes_actual   = dt.now().month
             total_insert = 0
             n_con_fecha  = 0
-            n_con_zonif  = 0
+            zi_map = (
+                REGION_CONFIGS.get(_REGION_ACTIVA or "", {})
+                .get("zi_codi_to_acr", {}))
 
+            # Campos minimos en insert (sector/zonif/exa van en batch al final)
+            # Evita insertRow NULL por dominio y consultas espaciales por fila.
             for area in areas:
                 cod   = area["cod"]
                 nom   = area["nom"]
                 es_zi = area["es_zi"]
                 shape = area["geom"]
+
+                if es_zi:
+                    lbl = cod.upper()
+                    if not lbl.startswith("ZI "):
+                        lbl = (
+                            "ZI "
+                            + lbl.replace("ZI_", "").replace("_", " ").strip()
+                        )
+                    cod_acr_padre = zi_map.get(lbl) or zi_map.get(cod) or cod
+                    zona_val = lbl if " " in lbl else f"ZI {lbl[2:].strip()}"
+                else:
+                    cod_acr_padre = cod
+                    zona_val = None
 
                 tag  = cod.replace(" ", "_").replace("/", "_").replace("-", "_")
                 clip = f"in_memory/clip_{tag}_{uuid.uuid4().hex[:8]}"
@@ -1449,7 +1701,6 @@ class InsertarAlertas(object):
                 try:
                     arcpy.analysis.Clip(poly_raw, shape, clip)
                     cnt = int(arcpy.management.GetCount(clip)[0])
-
                     if cnt == 0:
                         tipo_txt = "ZI" if es_zi else "ACR"
                         msg(f"   {tipo_txt} {cod}: sin alertas, omitido.")
@@ -1499,81 +1750,48 @@ class InsertarAlertas(object):
                                     mapa_fechas, grid_val, anno)
 
                             try:
-                                cent  = geom.centroid
-                                este  = round(cent.X, 1)
+                                cent = geom.centroid
+                                este = round(cent.X, 1)
                                 norte = round(cent.Y, 1)
                             except Exception:
                                 este = norte = None
 
-                            val_exa = None
-                            val_zon = None
-                            if col_fi:
-                                val_exa = _buscar_espacial(
-                                    geom, fc_exa, col_fi)
-                            if campos_zonif_busqueda:
-                                cod_acr_zon = cod if not es_zi else None
-                                if es_zi:
-                                    zi_map = (
-                                        REGION_CONFIGS.get(
-                                            _REGION_ACTIVA or "", {})
-                                        .get("zi_codi_to_acr", {}))
-                                    cod_acr_zon = zi_map.get(cod, cod_acr_zon)
-                                val_zon = _buscar_zonificacion(
-                                    geom, fc_zon, cod_acr_zon,
-                                    campos_zonif_busqueda)
-                                if val_zon:
-                                    _asegurar_valor_zonif_en_dominio(
-                                        gdb, fc_dest, val_zon)
-
                             fila = [None] * len(campos_insert)
                             fila[0] = geom
-
-                            zi_map = (
-                                REGION_CONFIGS.get(
-                                    _REGION_ACTIVA or "", {})
-                                .get("zi_codi_to_acr", {}))
-
                             if i_acod >= 0:
-                                if es_zi:
-                                    lbl = cod.upper()
-                                    if not lbl.startswith("ZI "):
-                                        lbl = f"ZI {lbl.replace('ZI_', '').replace('_', ' ').strip()}"
-                                    fila[i_acod] = zi_map.get(lbl) or zi_map.get(cod)
-                                else:
-                                    fila[i_acod] = cod
+                                fila[i_acod] = cod_acr_padre
                             if i_zcod >= 0:
                                 fila[i_zcod] = None
                             if i_zona >= 0:
-                                if es_zi:
-                                    lbl = cod.upper()
-                                    if lbl.startswith("ZI"):
-                                        fila[i_zona] = lbl if " " in lbl else f"ZI {lbl[2:].strip()}"
-                                    else:
-                                        fila[i_zona] = cod
-                                else:
-                                    fila[i_zona] = None
-                            if i_nom  >= 0: fila[i_nom]  = nom
-                            if i_fue  >= 0: fila[i_fue]  = cod_md_fuente
-                            if i_anno >= 0: fila[i_anno] = anno
-                            if i_sup  >= 0:
+                                fila[i_zona] = zona_val
+                            if i_nom >= 0:
+                                fila[i_nom] = (nom or "")[:100]
+                            if i_fue >= 0:
+                                fila[i_fue] = cod_md_fuente
+                            if i_anno >= 0:
+                                fila[i_anno] = int(anno)
+                            if i_sup >= 0:
                                 fila[i_sup] = (
-                                    round(area_ha, 6) if area_ha else None)
-                            if i_este >= 0: fila[i_este] = este
-                            if i_nor  >= 0: fila[i_nor]  = norte
-                            if i_exa  >= 0: fila[i_exa]  = val_exa
-                            if i_zon  >= 0 and val_zon:
-                                fila[i_zon]  = val_zon
-                                n_con_zonif += 1
-                            if i_mes  >= 0: fila[i_mes]  = mes_actual
-                            if i_fini >= 0: fila[i_fini] = fecha_ini
-                            if i_ffin >= 0: fila[i_ffin] = fecha_fin
-                            if i_fecimg >= 0:
-                                if fec_img:
-                                    fila[i_fecimg] = fec_img
-                                    n_con_fecha += 1
+                                    round(float(area_ha), 6)
+                                    if area_ha else None)
+                            if i_este >= 0:
+                                fila[i_este] = este
+                            if i_nor >= 0:
+                                fila[i_nor] = norte
+                            # md_exa / md_zonif / md_sector: batch al final
+                            if i_mes >= 0:
+                                fila[i_mes] = mes_actual
+                            if i_fini >= 0:
+                                fila[i_fini] = fecha_ini
+                            if i_ffin >= 0:
+                                fila[i_ffin] = fecha_fin
+                            if i_fecimg >= 0 and fec_img:
+                                fila[i_fecimg] = fec_img
 
                             ic.insertRow(fila)
                             ins += 1
+                            if fec_img:
+                                n_con_fecha += 1
 
                     total_insert += ins
                     tipo_txt = "ZI" if es_zi else "ACR"
@@ -1587,6 +1805,25 @@ class InsertarAlertas(object):
 
             _borrar_fc(poly_raw)
 
+            # Enriquecimiento espacial en batch (1 join por capa, no por alerta)
+            msg("")
+            msg("   Enriqueciendo sector / zonificacion / EXA (batch)...")
+            n_con_sector, n_con_zonif, n_con_exa = _enriquecer_alertas_batch(
+                fc_dest, gdb, anno, fc_zon, campo_tz,
+                fc_sectores, fc_exa, col_fi, msg,
+            )
+
+            try:
+                from atd_codigo_alerta import (
+                    asegurar_campo_md_codigo,
+                    asignar_codigos_faltantes,
+                )
+                asegurar_campo_md_codigo(fc_dest)
+                n_cod = asignar_codigos_faltantes(fc_dest, anno=int(anno))
+                msg(f"   md_codigo (alerta)  : {n_cod:,} asignados")
+            except Exception as ex_cod:
+                arcpy.AddWarning(f"   md_codigo: {ex_cod}")
+
             n_fue = _forzar_landsat_md_fuente(
                 fc_dest, gdb, anno, cod_md_fuente, msg)
             desc_fue = _desc_codigo_dominio(gdb, dom_fue, cod_md_fuente)
@@ -1594,7 +1831,7 @@ class InsertarAlertas(object):
             # ── RESUMEN FINAL ─────────────────────────────────────────
             msg("")
             msg("=" * 65)
-            msg(f"ATD H1 v5.7 — COMPLETADO")
+            msg(f"ATD H1 v5.8 — COMPLETADO")
             msg("=" * 65)
             msg(f"   Año procesado      : {anno}")
             msg(f"   Periodo            : "
@@ -1605,21 +1842,19 @@ class InsertarAlertas(object):
             msg(f"   FC destino         : {fc_dest_nom}")
             msg(f"   md_fuente (Fuente) : {cod_md_fuente} = "
                 f"{desc_fue or 'Landsat'} ({n_fue:,} registros)")
-            msg(f"   md_fecimg          : {n_con_fecha:,} / {total_insert:,} alertas con fecha")
-            msg(f"   md_zonif           : {n_con_zonif:,} / {total_insert:,} alertas con zonificacion")
+            msg(f"   md_fecimg          : {n_con_fecha:,} / {total_insert:,}")
+            msg(f"   md_zonif           : {n_con_zonif:,} / {total_insert:,}")
+            msg(f"   md_sector          : {n_con_sector:,} / {total_insert:,}")
+            msg(f"   md_exa             : {n_con_exa:,} / {total_insert:,}")
             if total_insert and n_con_fecha < total_insert:
-                msg(f"   AVISO md_fecimg     : {total_insert - n_con_fecha:,} sin fecha "
-                    f"(revisa gridcode en poligonos)")
+                msg(f"   AVISO md_fecimg     : {total_insert - n_con_fecha:,} sin fecha")
             msg(f"   md_anno            : {anno}")
-            msg(f"   md_fecini          : {_fmt_fecha(fecha_ini) if fecha_ini else 'campo no existe'}")
-            msg(f"   md_fecfin          : {_fmt_fecha(fecha_fin) if fecha_fin else 'campo no existe'}")
             msg(f"   EXA campo          : {col_fi or 'N/A'}")
             msg(f"   Zonif campo        : {campo_tz or 'N/A'}")
             msg("")
             msg("PROXIMOS PASOS:")
             msg(f"  → H2: Abre el Visor Satelital")
             msg(f"       Filtra por md_anno = {anno} para ver las nuevas alertas")
-            msg("       md_img (H2); md_fecimg ya viene de H1")
             msg("  → Fotointerpreta: marca md_causa en cada alerta")
             msg("  → H3: Genera el Reporte PDF oficial")
             msg("=" * 65)

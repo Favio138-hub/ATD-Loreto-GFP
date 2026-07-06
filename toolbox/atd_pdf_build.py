@@ -178,15 +178,21 @@ def generar_pdf_atd(job):
     este = a.get("md_este")
     norte = a.get("md_norte")
     grilla = str(a.get("md_exa", "") or "-")
-    lugar_poblado = str(a.get("lugar_poblado", "") or "-")
-    sector_rep = str(a.get("sector_reporte", "") or "-")
-    olv_cercano = str(a.get("olv_cercano", "") or "-")
+    from atd_region_config import _texto_reporte
+    lugar_poblado = _texto_reporte(a.get("lugar_poblado"))
+    sector_rep = _texto_reporte(a.get("sector_reporte") or a.get("md_sector"))
+    olv_cercano = _texto_reporte(a.get("olv_cercano"))
     provincia = a.get("provincia", "-")
     distrito = a.get("distrito", "-")
     fecha_str = a.get("fecha_str", "-")
     fecha_emision = datetime.now().strftime("%d/%m/%Y")
+    from atd_codigo_alerta import resolver_codigo_alerta
     anno = int(cfg.get("anno_reporte", datetime.now().year))
-    cod_reporte = f"RT-ATD-ACR-{sigla}-{anno}-{idx + 1:04d}"
+    cod_reporte = str(
+        a.get("codigo_alerta")
+        or a.get("md_codigo")
+        or resolver_codigo_alerta(a, correlativo=idx + 1, anno_fallback=anno)
+    )
 
     DIR_LOGOS = cfg["dir_logos"]
     RK_LOGOS = cfg.get("region_key", "loreto")

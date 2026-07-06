@@ -308,8 +308,14 @@ def ejecutar_reporte_modo_estable(params):
         este = alerta.get("md_este") or 0
         norte = alerta.get("md_norte") or 0
         url_eo, url_gee, lat, lon = _urls_vista(este, norte, EPSG)
+        from atd_codigo_alerta import resolver_codigo_alerta
         sigla = alerta.get("acr_sigla", cod)
-        cod_rep = f"RT-ATD-ACR-{sigla}-{ANNO}-{idx + 1:04d}"
+        cod_rep = str(
+            alerta.get("codigo_alerta")
+            or alerta.get("md_codigo")
+            or resolver_codigo_alerta(
+                alerta, correlativo=idx + 1, anno_fallback=ANNO)
+        )
 
         from atd_imagenes_h3 import buscar_imagen_local
         pa, meta_a = buscar_imagen_local(

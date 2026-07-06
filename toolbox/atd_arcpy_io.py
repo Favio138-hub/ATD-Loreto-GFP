@@ -166,9 +166,12 @@ def _enriquecer_registro(rec):
     rec["bosque_texto"] = DOMINIO_BOSQUE.get(b, "-") if b is not None else "-"
     rec["acr_nombre"] = ACR_NOMBRES.get(cod, cod)
     rec["acr_sigla"] = ACR_SIGLAS.get(cod, cod)
-    rec["lugar_poblado"] = rec.get("lugar_poblado") or "-"
-    rec["sector_reporte"] = rec.get("sector_reporte") or "-"
-    rec["olv_cercano"] = rec.get("olv_cercano") or "-"
+    from atd_region_config import _texto_reporte
+    rec["lugar_poblado"] = _texto_reporte(rec.get("lugar_poblado"))
+    rec["sector_reporte"] = _texto_reporte(
+        rec.get("sector_reporte") or rec.get("md_sector")
+    )
+    rec["olv_cercano"] = _texto_reporte(rec.get("olv_cercano"))
 
     este = rec.get("md_este")
     norte = rec.get("md_norte")

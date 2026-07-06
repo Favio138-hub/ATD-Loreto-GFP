@@ -44,10 +44,12 @@ from atd_arcpy_io import (
 )
 from atd_imagenes_h3 import (
     buscar_imagen_local,
+    bounds_imagen_desde_meta,
     marcar_png_con_alerta,
     quemar_vector_alerta_en_imagen,
     resolver_oid_imagen,
 )
+from atd_codigo_alerta import enrich_dataframe_codigos, resolver_codigo_alerta
 from atd_region_config import (
     REGION_CONFIGS,
     DEFAULT_GDB_LORETO,
@@ -1843,10 +1845,13 @@ class GenerarReporteATD(object):
             )
             try:
                 df_periodo = enriquecer_ubicacion_alertas(
-                    df_periodo, zonif_gdf=zonif_gdf, gdb_gestion=gdb_gestion
+                    df_periodo,
+                    zonif_gdf=zonif_gdf,
+                    gdb_gestion=gdb_gestion,
+                    gdb_linea=GDB_PATH,
                 )
                 arcpy.AddMessage(
-                    "  Ubicacion (gestion/zonif): lugar poblado, sector y OLV cercano"
+                    "  Ubicacion: lugar poblado, sector (gpo_sectores) y OLV cercano"
                 )
             except Exception as eu:
                 arcpy.AddWarning(f"No se pudo enriquecer ubicacion: {eu}")
@@ -1854,6 +1859,19 @@ class GenerarReporteATD(object):
             df_periodo["lugar_poblado"] = "-"
             df_periodo["sector_reporte"] = "-"
             df_periodo["olv_cercano"] = "-"
+
+        # md_sector de H1 tiene prioridad si sector_reporte quedó vacío/nan
+        if "md_sector" in df_periodo.columns:
+            from atd_region_config import _valor_util
+            if "sector_reporte" not in df_periodo.columns:
+                df_periodo["sector_reporte"] = "-"
+            for ix, val in df_periodo["md_sector"].items():
+                sec = _valor_util(val)
+                if not sec:
+                    continue
+                actual = str(df_periodo.at[ix, "sector_reporte"] or "")
+                if actual.strip().lower() in ("-", "", "nan", "none"):
+                    df_periodo.at[ix, "sector_reporte"] = sec
 
         # Resumen por ACR
         arcpy.AddMessage("")
@@ -1864,6 +1882,8 @@ class GenerarReporteATD(object):
             arcpy.AddMessage(f"  {cod:<8} {nom:<42} {n:>5,} {ha:>10.4f}{flag}")
 
         alertas_para_reporte = df_periodo.copy()
+        alertas_para_reporte = enrich_dataframe_codigos(
+            alertas_para_reporte, anno_fallback=ANNO_REPORTE)
         arcpy.AddMessage(f"\nOK {len(alertas_para_reporte):,} alertas listas")
 
         if ACR_FILTRO and ACR_FILTRO in ACR_CODIGOS_FC:
@@ -1944,13 +1964,14 @@ class GenerarReporteATD(object):
             return gdf.to_crs("EPSG:4326").total_bounds
 
         def marcar_alerta_en_imagen(arr_rgb, bounds_mapa, geom_wgs):
-            """Dibuja poligono rojo de la alerta sobre imagen Sentinel."""
+            """Dibuja contorno rojo de la alerta sobre imagen Sentinel."""
             return quemar_vector_alerta_en_imagen(
                 arr_rgb,
                 bounds_mapa,
                 geom_wgs,
                 epsg_bounds=EPSG_MAPA,
                 epsg_geom=4326,
+                estilo="circulo_limpio",
             )
 
         def descargar_sentinel2(geom_wgs, fecha_ref_str, tipo="antes", dias=45, max_nubes=35):
@@ -2361,13 +2382,22 @@ class GenerarReporteATD(object):
                 except Exception: fecha_str = str(fecha_val)
 
             fecha_emision = pd.Timestamp.today().strftime("%d/%m/%Y")
-            cod_reporte   = f"RT-ATD-ACR-{sigla}-{ANNO_REPORTE}-{idx+1:04d}"
+            cod_reporte = str(
+                alerta_row.get("codigo_alerta")
+                or alerta_row.get("md_codigo")
+                or resolver_codigo_alerta(
+                    alerta_row, anno_fallback=ANNO_REPORTE)
+            )
             geo           = ACR_GEO.get(cod_acr, {})
             provincia     = geo.get("provincia", "-")
             distrito      = geo.get("distrito",  "-")
-            lugar_poblado = str(alerta_row.get("lugar_poblado", "") or "-")
-            sector_rep    = str(alerta_row.get("sector_reporte", "") or "-")
-            olv_cercano   = str(alerta_row.get("olv_cercano", "") or "-")
+            from atd_region_config import _texto_reporte
+            lugar_poblado = _texto_reporte(alerta_row.get("lugar_poblado"))
+            sector_rep = _texto_reporte(
+                alerta_row.get("sector_reporte")
+                or alerta_row.get("md_sector")
+            )
+            olv_cercano = _texto_reporte(alerta_row.get("olv_cercano"))
             geom_alerta   = alerta_row.geometry
 
             # Preparar imágenes Sentinel (con marca de alerta)
@@ -2394,7 +2424,29 @@ class GenerarReporteATD(object):
                     id_local = str(meta.get("id", "") or "-")
                     sat_local = str(meta.get("sat", "") or sat_local)
                 ruta_marcada = marcar_png_con_alerta(
-                    ruta_png, geom_alerta, meta=meta, epsg_utm=EPSG_MAPA)
+                    ruta_png, geom_alerta, meta=meta,
+                    epsg_utm=EPSG_MAPA, estilo="circulo_limpio")
+                if (ruta_marcada == ruta_png and geom_alerta is not None
+                        and not os.path.basename(ruta_png).endswith("_vec.png")):
+                    try:
+                        from PIL import Image
+                        import numpy as np
+                        bnds, epsg_b = bounds_imagen_desde_meta(
+                            meta, geom_alerta, EPSG_MAPA)
+                        if bnds:
+                            arr = np.array(Image.open(ruta_png).convert("RGB"))
+                            arr_m = quemar_vector_alerta_en_imagen(
+                                arr, bnds, geom_alerta,
+                                epsg_bounds=epsg_b, epsg_geom=4326,
+                                estilo="circulo_limpio")
+                            tmp_vec = os.path.join(
+                                DIR_IMAGENES,
+                                f"_tmp_vec_{oid}_{sufijo}.png")
+                            Image.fromarray(arr_m).save(
+                                tmp_vec, format="PNG", optimize=True)
+                            ruta_marcada = tmp_vec
+                    except Exception:
+                        pass
                 arcpy.AddMessage(
                     f"  Img {sufijo} desde archivo: {os.path.basename(ruta_marcada)}"
                 )

@@ -250,15 +250,56 @@ def _poligonos_shapely(geom):
     return []
 
 
+def _centro_radio_circulo_pixeles(geom, bounds, w, h, factor=1.12, min_r=12):
+    """Centro y radio en pixeles para contorno circular de la alerta."""
+    import math
+
+    polys = _poligonos_shapely(geom)
+    pts = []
+    for poly in polys:
+        pts.extend(_ring_a_pixeles(poly.exterior.coords, bounds, w, h))
+    if not pts:
+        return None
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    r = max(math.hypot(px - cx, py - cy) for px, py in pts) * factor
+    return cx, cy, max(r, min_r)
+
+
+def _dibujar_vector_en_draw(draw, geom, bounds, w, h, estilo="circulo_limpio"):
+    """Dibuja alerta sobre ImageDraw: circulo limpio (informe) o poligono."""
+    if estilo in ("circulo", "circulo_limpio", None, ""):
+        cr = _centro_radio_circulo_pixeles(geom, bounds, w, h)
+        if not cr:
+            return
+        cx, cy, r = cr
+        box = [cx - r, cy - r, cx + r, cy + r]
+        draw.ellipse(box, outline=(255, 255, 255, 255), width=5)
+        draw.ellipse(box, outline=(196, 30, 58, 255), width=3)
+        return
+
+    polys = _poligonos_shapely(geom)
+    for poly in polys:
+        ext = _ring_a_pixeles(poly.exterior.coords, bounds, w, h)
+        if len(ext) < 3:
+            continue
+        closed = ext + [ext[0]]
+        draw.polygon(ext, fill=(227, 30, 58, 70))
+        draw.line(closed, fill=(255, 255, 255, 255), width=4)
+        draw.line(closed, fill=(196, 30, 58, 255), width=2)
+
+
 def quemar_vector_alerta_en_imagen(
     img_rgb,
     bounds,
     geom,
     epsg_bounds=4326,
     epsg_geom=4326,
+    estilo="circulo_limpio",
 ):
     """
-    Dibuja el poligono de la alerta en rojo sobre imagen RGB (numpy o PIL).
+    Dibuja la alerta en rojo sobre imagen RGB (numpy o PIL).
+    estilo: 'circulo_limpio' (informe PDF), 'circulo' o 'poligono'.
     bounds: (xmin, xmax, ymin, ymax) en epsg_bounds.
     """
     try:
@@ -289,15 +330,7 @@ def quemar_vector_alerta_en_imagen(
 
     draw = ImageDraw.Draw(pil, "RGBA")
     w, h = pil.size
-    polys = _poligonos_shapely(g)
-    for poly in polys:
-        ext = _ring_a_pixeles(poly.exterior.coords, bounds, w, h)
-        if len(ext) < 3:
-            continue
-        closed = ext + [ext[0]]
-        draw.polygon(ext, fill=(227, 30, 58, 70))
-        draw.line(closed, fill=(255, 255, 255, 255), width=4)
-        draw.line(closed, fill=(196, 30, 58, 255), width=2)
+    _dibujar_vector_en_draw(draw, g, bounds, w, h, estilo=estilo or "circulo_limpio")
 
     out = pil.convert("RGB")
     if hasattr(img_rgb, "size"):
@@ -329,7 +362,9 @@ def bounds_imagen_desde_meta(meta, geom_wgs, epsg_utm=32718, buffer_m=600):
         return None, 4326
 
 
-def marcar_png_con_alerta(ruta_png, geom_wgs, meta=None, epsg_utm=32718):
+def marcar_png_con_alerta(
+    ruta_png, geom_wgs, meta=None, epsg_utm=32718, estilo="circulo_limpio",
+):
     """Aplica vector rojo a PNG existente (H2 -> H3). Devuelve ruta marcada."""
     if not ruta_png or not os.path.isfile(ruta_png) or geom_wgs is None:
         return ruta_png
@@ -344,7 +379,8 @@ def marcar_png_con_alerta(ruta_png, geom_wgs, meta=None, epsg_utm=32718):
     try:
         arr = np.array(Image.open(ruta_png).convert("RGB"))
         arr_m = quemar_vector_alerta_en_imagen(
-            arr, bounds, geom_wgs, epsg_bounds=epsg_b, epsg_geom=4326)
+            arr, bounds, geom_wgs,
+            epsg_bounds=epsg_b, epsg_geom=4326, estilo=estilo or "circulo_limpio")
         base, ext = os.path.splitext(ruta_png)
         ruta_out = f"{base}_vec{ext}"
         Image.fromarray(arr_m).save(ruta_out, format="PNG", optimize=True)

@@ -63,25 +63,32 @@ REGION_CONFIGS = {
             "Alto Nanay Pintuyacu": "ACR10",
             "ACR Alto Nanay Pintuyacu": "ACR10",
             "ACR Alto Nanay Pintuyacu Chambira": "ACR10",
+            "Medio Putumayo Algodón": "ACR18",
+            "Medio Putumayo Algondon": "ACR18",
+            "ACR Medio Putumayo Algodón": "ACR18",
+            "ACR Medio Putumayo Algondon": "ACR18",
         },
         "acr_nombres": {
             "ACR09": "ACR Ampiyacu Apayacu",
             "ACR04": "ACR Comunal Tamshiyacu Tahuayo",
             "ACR17": "ACR Maijuna Kichwa",
             "ACR10": "ACR Alto Nanay Pintuyacu Chambira",
+            "ACR18": "ACR Medio Putumayo Algodón",
         },
         "acr_siglas": {
-            "ACR09": "AA", "ACR04": "CTT", "ACR17": "MK", "ACR10": "ANPCH",
+            "ACR09": "AA", "ACR04": "CTT", "ACR17": "MK",
+            "ACR10": "ANPCH", "ACR18": "MPA",
         },
         "acr_geo": {
             "ACR09": {"provincia": "Mariscal Ramon Castilla / Loreto", "distrito": "Ramon Castilla / Pebas"},
             "ACR04": {"provincia": "Loreto / Requena", "distrito": "Parinari / Sapuena"},
             "ACR17": {"provincia": "Putumayo / Maynas", "distrito": "Putumayo / Mazan"},
             "ACR10": {"provincia": "Maynas", "distrito": "Alto Nanay"},
+            "ACR18": {"provincia": "Putumayo / Maynas", "distrito": "Putumayo / Torres Causana"},
         },
         "zi_codi_to_acr": {
             "ZI ANPCH": "ACR10", "ZI CTT": "ACR04", "ZI MK": "ACR17", "ZI AA": "ACR09",
-            "ANPCH": "ACR10", "CTT": "ACR04", "MK": "ACR17", "AA": "ACR09",
+            "ANPCH": "ACR10", "CTT": "ACR04", "MK": "ACR17", "AA": "ACR09", "MPA": "ACR18",
         },
         "h1": {
             "fc_anp": "gpo_anp_monit",
@@ -586,26 +593,44 @@ def _first_existing_column(df, candidatos):
 def _valor_util(val):
     if val is None:
         return None
+    try:
+        import math
+        if isinstance(val, float) and math.isnan(val):
+            return None
+    except Exception:
+        pass
     s = str(val).strip()
-    if not s or s in ("-", " ", "Ver Plan Maestro en archivos digitales"):
+    if not s or s.lower() in (
+        "-", " ", "nan", "none", "null",
+        "ver plan maestro en archivos digitales",
+    ):
         return None
     return s
 
 
-def _sector_desde_zonif(geom, zonif_gdf, cod_acr):
+def _texto_reporte(val, default="-"):
+    """Texto seguro para PDF/tabla (nunca 'nan')."""
+    v = _valor_util(val)
+    return v if v else default
+
+
+def _sector_desde_capa(geom, sectores_gdf, cod_acr):
+    """Nombre del sector desde gpo_sectores (preferido) o gpo_zonif_anp."""
     import geopandas as gpd
 
-    if zonif_gdf is None or len(zonif_gdf) == 0:
+    if sectores_gdf is None or len(sectores_gdf) == 0:
         return None
     sec_col = _first_existing_column(
-        zonif_gdf, ["z_sect", "zacr_sect", "sector", "SECTOR"]
+        sectores_gdf,
+        ["sector_nom", "Nombre", "Sectores", "z_sect", "zacr_sect",
+         "sector", "SECTOR"],
     )
     if not sec_col:
         return None
     cod_col = _first_existing_column(
-        zonif_gdf, ["acr_codi", "anp_codi", "CODACR"]
+        sectores_gdf, ["acr_codi", "anp_codi", "CODACR"]
     )
-    zf = zonif_gdf
+    zf = sectores_gdf
     if cod_col:
         cod_norm = normalizar_cod_acr(cod_acr)
         mask = zf[cod_col].apply(
@@ -623,6 +648,26 @@ def _sector_desde_zonif(geom, zonif_gdf, cod_acr):
         return None
     val = joined.iloc[0][sec_col]
     return _valor_util(val)
+
+
+def _sector_desde_zonif(geom, zonif_gdf, cod_acr):
+    return _sector_desde_capa(geom, zonif_gdf, cod_acr)
+
+
+def cargar_gpo_sectores(gdb_path):
+    """Carga gpo_sectores (Sectores.shp por ACR) si existe en la GDB."""
+    import geopandas as gpd
+
+    if not gdb_path or not os.path.isdir(gdb_path):
+        return None
+    for layer in ("gpo_sectores", "Gpo_Sectores", "sectores"):
+        try:
+            gdf = gpd.read_file(gdb_path, layer=layer)
+            if gdf is not None and len(gdf):
+                return gdf
+        except Exception:
+            continue
+    return None
 
 
 def _cargar_cvc_gestion(gdb_gestion):
@@ -702,16 +747,22 @@ def _cvc_cercano(geom, cvc_gdf, cod_acr):
     return lp, olv
 
 
-def extraer_ubicacion_alerta(geom, cod_acr, zonif_gdf=None, gdb_gestion=None, region_key=None):
+def extraer_ubicacion_alerta(
+    geom, cod_acr, zonif_gdf=None, gdb_gestion=None, region_key=None,
+    sectores_gdf=None, md_sector=None,
+):
     """
     Extrae lugar poblado cercano, sector y OLV para una alerta.
-    Loreto: GDB gestión (CenVigComPunto) + zonificación línea base.
-    Otras regiones: sector desde gpo_zonif_anp si existe.
+    Loreto: sector desde md_sector / gpo_sectores / gpo_zonif_anp.
     """
     region_key = region_key or _REGION_ACTIVA or _detectar_region()
     out = {"lugar_poblado": "-", "sector": "-", "olv_cercano": "-"}
 
-    sector = _sector_desde_zonif(geom, zonif_gdf, cod_acr)
+    sector = _valor_util(md_sector)
+    if not sector and sectores_gdf is not None:
+        sector = _sector_desde_capa(geom, sectores_gdf, cod_acr)
+    if not sector:
+        sector = _sector_desde_zonif(geom, zonif_gdf, cod_acr)
     if sector:
         out["sector"] = sector
 
@@ -735,10 +786,13 @@ def extraer_ubicacion_alerta(geom, cod_acr, zonif_gdf=None, gdb_gestion=None, re
     return out
 
 
-def enriquecer_ubicacion_alertas(df, zonif_gdf=None, gdb_gestion=None, region_key=None):
+def enriquecer_ubicacion_alertas(
+    df, zonif_gdf=None, gdb_gestion=None, region_key=None,
+    sectores_gdf=None, gdb_linea=None,
+):
     """
     Añade lugar_poblado, sector_reporte, olv_cercano.
-    Join espacial por lotes (evita miles de sjoin en bucle que congela/cierra ArcGIS Pro).
+    Prioridad sector: md_sector → gpo_sectores → gpo_zonif_anp.
     """
     import geopandas as gpd
 
@@ -751,31 +805,58 @@ def enriquecer_ubicacion_alertas(df, zonif_gdf=None, gdb_gestion=None, region_ke
     if out.empty or out.geometry is None:
         return out
 
+    # md_sector ya en la tabla de alertas (H1)
+    if "md_sector" in out.columns:
+        for ix, val in out["md_sector"].items():
+            sec = _valor_util(val)
+            if sec:
+                out.at[ix, "sector_reporte"] = sec
+
+    if sectores_gdf is None and gdb_linea:
+        sectores_gdf = cargar_gpo_sectores(gdb_linea)
+
     try:
         pts = out[["geometry"]].copy()
         pts["geometry"] = pts.geometry.centroid
-        if zonif_gdf is not None and getattr(zonif_gdf, "crs", None):
-            pts = pts.to_crs(zonif_gdf.crs)
+        ref_crs = None
+        if sectores_gdf is not None and getattr(sectores_gdf, "crs", None):
+            ref_crs = sectores_gdf.crs
+        elif zonif_gdf is not None and getattr(zonif_gdf, "crs", None):
+            ref_crs = zonif_gdf.crs
+        if ref_crs is not None:
+            pts = pts.to_crs(ref_crs)
         elif pts.crs is None:
             pts = pts.set_crs(epsg=32718)
         pts["_cod_norm"] = out["anp_codi"].apply(normalizar_anp_codi)
 
-        if zonif_gdf is not None and len(zonif_gdf):
+        def _aplicar_sector_desde(gdf_src):
+            if gdf_src is None or not len(gdf_src):
+                return
             sec_col = _first_existing_column(
-                zonif_gdf, ["z_sect", "zacr_sect", "sector", "SECTOR"]
+                gdf_src,
+                ["sector_nom", "Nombre", "Sectores", "z_sect", "zacr_sect",
+                 "sector", "SECTOR"],
             )
-            if sec_col:
-                zf = zonif_gdf[[sec_col, "geometry"]].copy()
-                try:
-                    j = gpd.sjoin(pts, zf, how="left", predicate="intersects")
-                    if not j.empty:
-                        j = j[~j.index.duplicated(keep="first")]
-                        for pt_ix, row in j.iterrows():
-                            sec = _valor_util(row.get(sec_col))
-                            if sec:
-                                out.at[pt_ix, "sector_reporte"] = sec
-                except Exception:
-                    pass
+            if not sec_col:
+                return
+            zf = gdf_src[[sec_col, "geometry"]].copy()
+            try:
+                j = gpd.sjoin(pts, zf, how="left", predicate="intersects")
+                if j.empty:
+                    return
+                j = j[~j.index.duplicated(keep="first")]
+                for pt_ix, row in j.iterrows():
+                    if out.at[pt_ix, "sector_reporte"] not in ("-", "", None):
+                        continue
+                    sec = _valor_util(row.get(sec_col))
+                    if sec:
+                        out.at[pt_ix, "sector_reporte"] = sec
+            except Exception:
+                pass
+
+        _aplicar_sector_desde(sectores_gdf)
+        if zonif_gdf is not None and len(zonif_gdf):
+            _aplicar_sector_desde(zonif_gdf)
 
         if region_key == "loreto":
             gdb_g = gdb_gestion or GESTION_GDB_ACTIVA

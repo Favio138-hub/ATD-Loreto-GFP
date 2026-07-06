@@ -1123,7 +1123,10 @@ def extraer_vectores_fc(fc_path, where_clause="", acr_filtro=""):
     campos_fc = {f.name.lower(): f.name for f in arcpy.ListFields(fc_path)}
 
     cod_fields = []
-    for c in ["anp_codi", "cod_acr", "acr_codi", "codigo", "cod"]:
+    for c in [
+        "md_codigo", "cod_alerta", "codigo_alerta",
+        "anp_codi", "cod_acr", "acr_codi", "codigo", "cod",
+    ]:
         if c in campos_fc:
             cod_fields.append(campos_fc[c])
     if not cod_fields:
@@ -1498,6 +1501,10 @@ class ZoomCanvas:
         self._show_sel_poly = True
         self._show_neighbors = True
         self._vec_labels = []
+        self._vector_style = "poligono"
+        self._sync_partner = None
+        self._sync_zoom = True
+        self._sync_guard = False
 
         self.cv.bind("<Configure>",       self._on_resize)
         self.cv.bind("<MouseWheel>",      self._on_wheel)
@@ -1541,6 +1548,7 @@ class ZoomCanvas:
         estado = "Imagen lista" if crop_ok else "Tile completo"
         self.lbl_img_status.config(text=estado, fg=C["azul"])
         self._redraw()
+        self._publish_view()
         self.cv.update_idletasks()
 
     def set_escena(self, escena, poly_sel, bbox_view, polys_vec=None, cod_alerta="",
@@ -1579,6 +1587,42 @@ class ZoomCanvas:
         self._show_sel_poly = bool(show_sel)
         self._show_neighbors = bool(show_neighbors)
         self._redraw()
+
+    def set_sync_partner(self, other):
+        self._sync_partner = other
+
+    def set_sync_zoom(self, enabled):
+        self._sync_zoom = bool(enabled)
+
+    def set_vector_style(self, style):
+        if style in ("circulo", "circulo_limpio"):
+            style = "circulo_limpio"
+        self._vector_style = (
+            style if style in ("poligono", "circulo_limpio") else "poligono"
+        )
+        self._redraw()
+
+    def get_view(self):
+        return self._zoom, self._pan_x, self._pan_y
+
+    def set_view(self, zoom, pan_x, pan_y, redraw=True):
+        self._zoom = zoom
+        self._pan_x = pan_x
+        self._pan_y = pan_y
+        if redraw:
+            self._redraw()
+
+    def _publish_view(self):
+        if self._sync_guard or not self._sync_zoom:
+            return
+        partner = self._sync_partner
+        if not partner:
+            return
+        partner._sync_guard = True
+        try:
+            partner.set_view(self._zoom, self._pan_x, self._pan_y)
+        finally:
+            partner._sync_guard = False
 
     def _encuadrar_alerta(self):
         """Zoom al panel + centrar en la alerta (fotointerpretación)."""
@@ -1788,7 +1832,7 @@ class ZoomCanvas:
     # v6.3 — _draw_vector_sel: polígono rojo completo (fill + outline + vértices)
     # ══════════════════════════════════════════════════════════════════════════
     def _draw_vector_sel(self, w, h):
-        """Dibuja el polígono SELECCIONADO en rojo prominente con todos sus vértices."""
+        """Poligono completo (default) o circulo solo contorno sin relleno."""
         if not self._show_sel_poly or not self._poly_sel:
             return
         bbox = self._bbox()
@@ -1801,41 +1845,58 @@ class ZoomCanvas:
             pts = self._pts_cv(self._poly_sel, bbox)
             if len(pts) < 2:
                 return
-            fl = self._flat(pts)
 
-            # Sombra exterior
-            fl_s = [c + 4 for c in fl]
-            if len(fl_s) >= 4:
-                self.cv.create_polygon(fl_s, outline="#000000", fill="", width=6)
-
-            # Relleno rojo translúcido (polígono completo)
-            self.cv.create_polygon(fl, outline=C["rojo2"], fill=C["rojo2"],
-                                    stipple="gray25", width=3)
-            # Borde rojo sólido (polígono completo)
-            self.cv.create_polygon(fl, outline=C["rojo2"], fill="", width=3)
-
-            # Vértices individuales
-            for px, py in pts:
-                r = 4
-                self.cv.create_oval(px-r, py-r, px+r, py+r,
-                                     fill=C["rojo2"], outline="white", width=1)
-
-            # Cruz en el centroide
             cx = sum(p[0] for p in pts) / len(pts)
             cy = sum(p[1] for p in pts) / len(pts)
-            r  = 10
-            for col, wd in [("#000000", 4), (C["amarillo"], 2)]:
-                self.cv.create_line(cx-r-6, cy, cx+r+6, cy, fill=col, width=wd)
-                self.cv.create_line(cx, cy-r-6, cx, cy+r+6, fill=col, width=wd)
-            self.cv.create_oval(cx-r, cy-r, cx+r, cy+r,
-                                  fill=C["amarillo"], outline="white", width=2)
-
-            # Etiqueta del código
             cod = self._cod_alerta or "ALERTA"
-            self.cv.create_rectangle(cx-65, cy-r-32, cx+65, cy-r-12,
-                                      fill="#000000", outline=C["rojo2"], width=1)
-            self.cv.create_text(cx, cy-r-22, text=f"▲ {cod}",
-                                 fill=C["rojo2"], font=("Consolas", 8, "bold"))
+
+            if self._vector_style == "circulo_limpio":
+                r = max(
+                    ((px - cx) ** 2 + (py - cy) ** 2) ** 0.5
+                    for px, py in pts
+                ) * 1.12
+                r = max(r, 18)
+                for col, wd in [("#000000", 6), ("#FFFFFF", 4), (C["rojo2"], 3)]:
+                    self.cv.create_oval(
+                        cx - r, cy - r, cx + r, cy + r,
+                        outline=col, fill="", width=wd,
+                    )
+                self.cv.create_rectangle(
+                    cx - 65, cy - r - 32, cx + 65, cy - r - 12,
+                    fill="#000000", outline=C["rojo2"], width=1,
+                )
+                self.cv.create_text(
+                    cx, cy - r - 22, text=f"▲ {cod}",
+                    fill=C["rojo2"], font=("Consolas", 8, "bold"),
+                )
+            else:
+                fl = self._flat(pts)
+                fl_s = [c + 4 for c in fl]
+                if len(fl_s) >= 4:
+                    self.cv.create_polygon(fl_s, outline="#000000", fill="", width=6)
+                self.cv.create_polygon(fl, outline=C["rojo2"], fill=C["rojo2"],
+                                        stipple="gray25", width=3)
+                self.cv.create_polygon(fl, outline=C["rojo2"], fill="", width=3)
+                for px, py in pts:
+                    vr = 4
+                    self.cv.create_oval(px - vr, py - vr, px + vr, py + vr,
+                                         fill=C["rojo2"], outline="white", width=1)
+                r_c = 10
+                for col, wd in [("#000000", 4), (C["amarillo"], 2)]:
+                    self.cv.create_line(cx - r_c - 6, cy, cx + r_c + 6, cy,
+                                        fill=col, width=wd)
+                    self.cv.create_line(cx, cy - r_c - 6, cx, cy + r_c + 6,
+                                        fill=col, width=wd)
+                self.cv.create_oval(cx - r_c, cy - r_c, cx + r_c, cy + r_c,
+                                    fill=C["amarillo"], outline="white", width=2)
+                self.cv.create_rectangle(
+                    cx - 65, cy - r_c - 32, cx + 65, cy - r_c - 12,
+                    fill="#000000", outline=C["rojo2"], width=1,
+                )
+                self.cv.create_text(
+                    cx, cy - r_c - 22, text=f"▲ {cod}",
+                    fill=C["rojo2"], font=("Consolas", 8, "bold"),
+                )
 
         except Exception:
             pass
@@ -1843,16 +1904,19 @@ class ZoomCanvas:
     def _zoom_in(self, f=1.25):
         self._zoom = min(self._zoom * f, 16.0)
         self._redraw()
+        self._publish_view()
 
     def _zoom_out(self, f=1.25):
         self._zoom = max(self._zoom / f, 0.05)
         self._redraw()
+        self._publish_view()
 
     def _reset_zoom(self, evt=None):
         self._zoom  = 1.0
         self._pan_x = 0
         self._pan_y = 0
         self._redraw()
+        self._publish_view()
 
     def _on_wheel(self, evt):
         if evt.widget is self.cv:
@@ -1871,6 +1935,7 @@ class ZoomCanvas:
         self._drag_x = evt.x
         self._drag_y = evt.y
         self._redraw()
+        self._publish_view()
 
     def _on_resize(self, evt):
         self._redraw()
@@ -2162,6 +2227,8 @@ class VisorATD:
         self.v_show_alertas = tk.BooleanVar(value=True)
         self.v_show_vec_sel  = self.v_show_alertas
         self.v_show_vec_all  = self.v_show_alertas
+        self.v_sync_zoom = tk.BooleanVar(value=True)
+        self.v_circulo_sin_relleno = tk.BooleanVar(value=False)
 
         try:
             from PIL import Image, ImageTk, ImageDraw, ImageFont
@@ -2594,28 +2661,40 @@ class VisorATD:
         p = tk.Frame(body, bg=C["bg"])
         p.pack(side="left", fill="both", expand=True)
 
-        hdr = tk.Frame(p, bg=C["header"], height=42)
+        hdr = tk.Frame(p, bg=C["header"])
         hdr.pack(fill="x")
-        hdr.pack_propagate(False)
+
+        row1 = tk.Frame(hdr, bg=C["header"])
+        row1.pack(fill="x", padx=8, pady=(6, 2))
         tk.Label(
-            hdr,
-            text="Fotointerpretación — ANTES / DESPUÉS  "
-                 "[rueda=zoom | arrastre=pan | doble-click=reset]",
+            row1,
+            text="Fotointerpretación — ANTES / DESPUÉS",
             bg=C["header"], fg="#FFFFFF",
             font=("Segoe UI", 10, "bold"),
-        ).pack(side="left", padx=10, pady=10)
+        ).pack(side="left")
+        self.btn_anim = self._btn_mini(row1, "Animación", C["azul"], self._anim_toggle)
+        self.btn_anim.pack(side="right", padx=4)
 
-        vtb = tk.Frame(hdr, bg=C["header"])
-        vtb.pack(side="left", padx=8)
+        row2 = tk.Frame(hdr, bg=C["header"])
+        row2.pack(fill="x", padx=8, pady=(0, 6))
         _GFPCheck(
-            vtb, self.v_show_alertas, text="Alertas",
+            row2, self.v_show_alertas, text="Alertas",
             bg=C["header"], fg="#FFFFFF", accent="#FFFFFF",
             font=("Segoe UI", 9, "bold"),
             command=self._on_vector_toggle, size=16,
-        ).pack(side="left", padx=6)
-
-        self.btn_anim = self._btn_mini(hdr, "Animación", C["azul"], self._anim_toggle)
-        self.btn_anim.pack(side="right", padx=8, pady=6)
+        ).pack(side="left", padx=(0, 10))
+        _GFPCheck(
+            row2, self.v_sync_zoom, text="Zoom sync",
+            bg=C["header"], fg="#FFFFFF", accent="#FFFFFF",
+            font=("Segoe UI", 9, "bold"),
+            command=self._on_sync_toggle, size=16,
+        ).pack(side="left", padx=(0, 10))
+        _GFPCheck(
+            row2, self.v_circulo_sin_relleno, text="Círculo sin relleno",
+            bg=C["header"], fg="#FFFFFF", accent="#FFFFFF",
+            font=("Segoe UI", 9, "bold"),
+            command=self._on_circulo_toggle, size=16,
+        ).pack(side="left", padx=(0, 10))
 
         area = tk.Frame(p, bg=C["bg"])
         area.pack(fill="both", expand=True, padx=6, pady=4)
@@ -2625,6 +2704,11 @@ class VisorATD:
         tk.Frame(area, bg=C["sep"], width=2).pack(side="left", fill="y")
         self.zc_d = ZoomCanvas(area, "DESPUES", C["verde2"])
         self.zc_d._lado = "DESPUES"
+        self.zc_a.set_sync_partner(self.zc_d)
+        self.zc_d.set_sync_partner(self.zc_a)
+        self.zc_a.set_sync_zoom(self.v_sync_zoom.get())
+        self.zc_d.set_sync_zoom(self.v_sync_zoom.get())
+        self._aplicar_estilo_vector_en_canvas()
 
         self.lbl_fa    = self.zc_a.lbl_fecha
         self.lbl_fd    = self.zc_d.lbl_fecha
@@ -2913,11 +2997,40 @@ class VisorATD:
                 target=self._img_hilo, args=(self.esc_d, "d"), daemon=True,
             ).start()
 
+    def _estilo_vector_actual(self):
+        return (
+            "circulo_limpio"
+            if self.v_circulo_sin_relleno.get()
+            else "poligono"
+        )
+
+    def _aplicar_estilo_vector_en_canvas(self):
+        est = self._estilo_vector_actual()
+        for zc in (self.zc_a, self.zc_d):
+            zc.set_vector_style(est)
+
     def _on_vector_toggle(self):
         on = self.v_show_alertas.get()
         for zc in (self.zc_a, self.zc_d):
             zc.set_vector_visibility(on, on)
         self._log(f"Alertas en mapa: {'ON' if on else 'OFF'}", "info")
+
+    def _on_sync_toggle(self):
+        on = self.v_sync_zoom.get()
+        for zc in (self.zc_a, self.zc_d):
+            zc.set_sync_zoom(on)
+        if on:
+            self.zc_d.set_view(*self.zc_a.get_view())
+        self._log(f"Zoom sincronizado: {'ON' if on else 'OFF'}", "info")
+
+    def _on_circulo_toggle(self):
+        self._aplicar_estilo_vector_en_canvas()
+        modo = (
+            "circulo sin relleno"
+            if self.v_circulo_sin_relleno.get()
+            else "poligono completo"
+        )
+        self._log(f"Estilo vector: {modo}", "info")
 
     def _bytes_imagen_export(self, esc, pil_img, export_px):
         """
@@ -3197,6 +3310,10 @@ class VisorATD:
 
         self.zc_a.set_vector(poly, bbox_vec, cod_alerta=cod, **kw_v)
         self.zc_d.set_vector(poly, bbox_vec, cod_alerta=cod, **kw_v)
+        on = self.v_show_alertas.get()
+        self._aplicar_estilo_vector_en_canvas()
+        for zc in (self.zc_a, self.zc_d):
+            zc.set_vector_visibility(on, on)
 
         if n_pts == 0:
             self._log("Sin vértices WGS84 — verifica SR del FC en ArcGIS Pro", "warn")
@@ -4611,12 +4728,19 @@ def _run_visor_satelital(
                                     pil_h3 = visor.PIL.open(
                                         io.BytesIO(img_bytes)).convert("RGB")
                                     geom_h3 = Polygon(pts_wgs)
+                                    estilo_h3 = "circulo_limpio"
+                                    try:
+                                        if hasattr(visor, "_estilo_vector_actual"):
+                                            estilo_h3 = visor._estilo_vector_actual()
+                                    except Exception:
+                                        estilo_h3 = "circulo_limpio"
                                     pil_m = quemar_vector_alerta_en_imagen(
                                         pil_h3,
                                         tuple(float(x) for x in bbox_h3),
                                         geom_h3,
                                         epsg_bounds=4326,
                                         epsg_geom=4326,
+                                        estilo=estilo_h3,
                                     )
                                     buf_h3 = io.BytesIO()
                                     pil_m.save(buf_h3, format="PNG")
