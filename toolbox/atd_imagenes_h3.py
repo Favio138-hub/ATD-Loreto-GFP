@@ -363,7 +363,7 @@ def bounds_imagen_desde_meta(meta, geom_wgs, epsg_utm=32718, buffer_m=600):
 
 
 def marcar_png_con_alerta(
-    ruta_png, geom_wgs, meta=None, epsg_utm=32718, estilo="circulo_limpio",
+    ruta_png, geom_wgs, meta=None, epsg_utm=32718, estilo="poligono",
 ):
     """Aplica vector rojo a PNG existente (H2 -> H3). Devuelve ruta marcada."""
     if not ruta_png or not os.path.isfile(ruta_png) or geom_wgs is None:
@@ -380,7 +380,7 @@ def marcar_png_con_alerta(
         arr = np.array(Image.open(ruta_png).convert("RGB"))
         arr_m = quemar_vector_alerta_en_imagen(
             arr, bounds, geom_wgs,
-            epsg_bounds=epsg_b, epsg_geom=4326, estilo=estilo or "circulo_limpio")
+            epsg_bounds=epsg_b, epsg_geom=4326, estilo=estilo or "poligono")
         base, ext = os.path.splitext(ruta_png)
         ruta_out = f"{base}_vec{ext}"
         Image.fromarray(arr_m).save(ruta_out, format="PNG", optimize=True)

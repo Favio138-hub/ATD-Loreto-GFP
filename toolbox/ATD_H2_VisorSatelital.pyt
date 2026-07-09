@@ -4728,12 +4728,12 @@ def _run_visor_satelital(
                                     pil_h3 = visor.PIL.open(
                                         io.BytesIO(img_bytes)).convert("RGB")
                                     geom_h3 = Polygon(pts_wgs)
-                                    estilo_h3 = "circulo_limpio"
+                                    estilo_h3 = "poligono"
                                     try:
                                         if hasattr(visor, "_estilo_vector_actual"):
                                             estilo_h3 = visor._estilo_vector_actual()
                                     except Exception:
-                                        estilo_h3 = "circulo_limpio"
+                                        estilo_h3 = "poligono"
                                     pil_m = quemar_vector_alerta_en_imagen(
                                         pil_h3,
                                         tuple(float(x) for x in bbox_h3),

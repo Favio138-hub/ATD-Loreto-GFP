@@ -28,7 +28,8 @@ DOMINIO_CAUSA = {
     14: "Natural", 15: "Incendio Antropico",
     16: "Falsa Alerta", 99: "Sin Clasificar",
 }
-CAUSAS_NO_ANTROPICAS = {14, 16}
+CAUSAS_EXCLUIDAS_REPORTE = {16, 99}  # Falsa alerta (dominio GDB)
+CAUSAS_NO_ANTROPICAS = CAUSAS_EXCLUIDAS_REPORTE  # compat
 _CAUSA_TEXTO_A_INT = {
     v.lower().strip(): k for k, v in DOMINIO_CAUSA.items()
 }
@@ -254,10 +255,10 @@ def _leer_alertas_una_fc(
                 f"-> '{rec['anp_codi']}'"
             )
             return None
-        if rec["_causa_int"] in CAUSAS_NO_ANTROPICAS:
+        if rec["_causa_int"] in CAUSAS_EXCLUIDAS_REPORTE:
             fn(
                 f"  AVISO [{fc_alertas}]: OID {rec.get('objectid')} omitido — "
-                f"causa no antropica ({rec.get('md_causa')!r})"
+                f"causa excluida del reporte ({rec.get('md_causa')!r})"
             )
             return None
         if rec["_causa_int"] is None:
