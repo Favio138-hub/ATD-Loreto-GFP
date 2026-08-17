@@ -17,6 +17,7 @@ CAMBIOS:
 
 import arcpy
 import os
+import re
 import sys
 import traceback
 import tempfile
@@ -65,16 +66,17 @@ class Toolbox(object):
         )
         self.alias       = "ATD_H1_InsertarAlertas"
         self.description = (
-            "ATD TOOLBOX H1 — GFP Subnacional Loreto/Cuzco/San Martin v5.3\n\n"
+            "ATD TOOLBOX H1 — GFP Subnacional Loreto/Cuzco/San Martin v5.9\n\n"
             "Descarga alertas Geobosques del año seleccionado y las\n"
             "inserta en el FC existente MonitoreoDeforestacion (vigente).\n\n"
             "El historico 2001-2025 permanece en MonitoreoDeforestacionAcumulado.\n\n"
-            "NUEVO v5.1: Rango de fechas (inicio/fin) del periodo monitoreado.\n"
-            "Las fechas se guardan en md_fecini / md_fecfin si existen.\n\n"
+            "v5.9: Filtro por ACR (incluye su ZI) y recorte real por fecha\n"
+            "de imagen Geobosques (md_fecimg). El ZIP de Geobosques es anual;\n"
+            "el periodo inicio/fin ahora SI filtra que alertas se insertan.\n\n"
             "Procesa ACRs (anp_codi) y Zonas de Influencia (zona_influencia).\n"
             "zi_codi permanece vacio; la ZI va en zona_influencia.\n\n"
-            "Si ya existen registros del año seleccionado en el FC,\n"
-            "los elimina primero para evitar duplicados.\n\n"
+            "Si marca eliminar previos, borra solo el mismo periodo y las\n"
+            "ACR seleccionadas (no todo el año ni otras ACR).\n\n"
             "CAMPOS QUE LLENA:\n"
             "  anp_codi, zona_influencia, md_exa, ac_nomb, md_fuente=Landsat,\n"
             "  md_anno, md_sup (HA), md_este, md_norte,\n"
@@ -1109,6 +1111,226 @@ def _asignar_fecha_a_poligonos(poly_fc, mapa_fechas, campo_grid, anno, msg_fn=No
     return n_ok
 
 
+def _cod_acr_canonico(cod):
+    """Normaliza ACR09 / ACR 9 / acr10 → ACR09 / ACR10."""
+    s = str(cod or "").strip().upper()
+    m = re.search(r"ACR\s*(\d+)", s)
+    if not m:
+        return str(cod or "").strip()
+    n = int(m.group(1))
+    return f"ACR{n:02d}" if n < 10 else f"ACR{n}"
+
+
+def _valores_multivalor(param):
+    if param is None:
+        return []
+    try:
+        vals = getattr(param, "values", None)
+        if vals:
+            out = [str(v).strip() for v in vals if v is not None and str(v).strip()]
+            if out:
+                return out
+    except Exception:
+        pass
+    txt = getattr(param, "valueAsText", None) or ""
+    if not str(txt).strip():
+        return []
+    return [p.strip() for p in str(txt).replace(";", "\n").splitlines() if p.strip()]
+
+
+def _cod_acr_padre(cod, es_zi, zi_map):
+    if not es_zi:
+        return cod
+    zi_map = zi_map or {}
+    lbl = str(cod or "").strip().upper()
+    if not lbl.startswith("ZI "):
+        lbl = "ZI " + lbl.replace("ZI_", "").replace("_", " ").strip()
+    return (
+        zi_map.get(lbl)
+        or zi_map.get(cod)
+        or zi_map.get(str(cod or "").strip())
+        or zi_map.get(lbl.replace("ZI ", ""))
+    )
+
+
+def _codigos_acr_desde_filtro(textos, areas, nomb_to_codi=None):
+    """Resuelve seleccion UI (ACR10 — Nombre) a codigos ACR del FC."""
+    nomb_to_codi = nomb_to_codi or {}
+    if not textos:
+        return set()
+    known = {}
+    for a in areas:
+        if a.get("es_zi"):
+            continue
+        known[_cod_acr_canonico(a["cod"])] = a["cod"]
+        known[str(a["cod"]).strip().upper()] = a["cod"]
+    out = set()
+    for t in textos:
+        t = str(t or "").strip()
+        if not t:
+            continue
+        can = _cod_acr_canonico(t)
+        if can in known:
+            out.add(known[can])
+            continue
+        tl = t.lower()
+        hit = False
+        for alias, cod in nomb_to_codi.items():
+            if not alias:
+                continue
+            al = str(alias).lower()
+            if al in tl or tl in al:
+                out.add(cod)
+                hit = True
+                break
+        if hit:
+            continue
+        for a in areas:
+            if a.get("es_zi"):
+                continue
+            nom = str(a.get("nom") or "").lower()
+            if nom and (nom in tl or tl in nom):
+                out.add(a["cod"])
+                break
+    return out
+
+
+def _filtrar_areas_por_acr(areas, cods_sel, zi_map):
+    """Deja ACR elegidas y su ZI hija. Vacio = todas."""
+    if not cods_sel:
+        return areas
+    sel_norm = {_cod_acr_canonico(c) for c in cods_sel}
+    out = []
+    for a in areas:
+        if a.get("es_zi"):
+            padre = _cod_acr_padre(a.get("cod"), True, zi_map)
+            if padre and _cod_acr_canonico(padre) in sel_norm:
+                out.append(a)
+        elif _cod_acr_canonico(a.get("cod")) in sel_norm:
+            out.append(a)
+    return out
+
+
+def _fecha_en_periodo(fec, fi, ff):
+    """True si fec cae en [fi, ff]. None si no hay fecha interpretable."""
+    if fec is None or fi is None or ff is None:
+        return None
+    d = fec if isinstance(fec, dt) else _parse_fecha(fec)
+    if d is None:
+        return None
+    if getattr(d, "tzinfo", None) is not None:
+        d = d.replace(tzinfo=None)
+    if getattr(fi, "tzinfo", None) is not None:
+        fi = fi.replace(tzinfo=None)
+    if getattr(ff, "tzinfo", None) is not None:
+        ff = ff.replace(tzinfo=None)
+    di = fi.replace(hour=0, minute=0, second=0, microsecond=0)
+    df = ff.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return di <= d <= df
+
+
+def _fecha_sql_gdb(d):
+    return d.strftime("%Y-%m-%d")
+
+
+def _where_eliminar_previos(fc_dest, anno, fecha_ini, fecha_fin, cods_acr):
+    """Borra solo año + periodo md_fecimg + ACR (no todo el año)."""
+    campos = _campos_map_fc(fc_dest)
+    c_anno = campos.get("md_anno", "md_anno")
+    parts = [f"{c_anno} = {int(anno)}"]
+    if cods_acr:
+        c_anp = campos.get("anp_codi", "anp_codi")
+        vals = []
+        for c in sorted(cods_acr):
+            raw = str(c).replace("'", "''")
+            vals.append(f"'{raw}'")
+            can = _cod_acr_canonico(c).replace("'", "''")
+            if can and f"'{can}'" not in vals:
+                vals.append(f"'{can}'")
+        parts.append(f"{c_anp} IN ({','.join(vals)})")
+    if fecha_ini and fecha_fin and "md_fecimg" in campos:
+        c_f = campos["md_fecimg"]
+        fi = _fecha_sql_gdb(fecha_ini)
+        ff_excl = _fecha_sql_gdb(
+            fecha_fin.replace(hour=0, minute=0, second=0, microsecond=0)
+            + timedelta(days=1)
+        )
+        parts.append(f"{c_f} >= date '{fi}' AND {c_f} < date '{ff_excl}'")
+    return " AND ".join(parts)
+
+
+def _filtrar_poligonos_por_periodo(poly_fc, fecha_ini, fecha_fin, msg_fn=None):
+    """Recorta el raster anual de Geobosques al periodo md_fecimg."""
+    fn = msg_fn or (lambda s: None)
+    if not fecha_ini or not fecha_fin or not arcpy.Exists(poly_fc):
+        return poly_fc
+    nombres = {f.name.lower(): f.name for f in arcpy.ListFields(poly_fc)}
+    if _CAMPO_FEC_IMG_POLY.lower() not in nombres:
+        fn("   AVISO: poligonos sin fecha; el recorte se hara al insertar")
+        return poly_fc
+    campo = nombres[_CAMPO_FEC_IMG_POLY.lower()]
+    fi = _fecha_sql_gdb(fecha_ini)
+    ff_excl = _fecha_sql_gdb(
+        fecha_fin.replace(hour=0, minute=0, second=0, microsecond=0)
+        + timedelta(days=1)
+    )
+    where = f"{campo} >= date '{fi}' AND {campo} < date '{ff_excl}'"
+    out = "in_memory/poly_alertas_periodo"
+    _borrar_fc(out)
+    lyr = "__lyr_poly_periodo__"
+    try:
+        if arcpy.Exists(lyr):
+            arcpy.management.Delete(lyr)
+        arcpy.management.MakeFeatureLayer(poly_fc, lyr, where)
+        n = int(arcpy.management.GetCount(lyr)[0])
+        fn(
+            f"   Poligonos en periodo {_fmt_fecha(fecha_ini)} → "
+            f"{_fmt_fecha(fecha_fin)}: {n:,}"
+        )
+        if n == 0:
+            fn(
+                "   AVISO: 0 poligonos con fecha de imagen en ese periodo. "
+                "Geobosques entrega el año completo; revisa md_fecimg."
+            )
+        arcpy.management.CopyFeatures(lyr, out)
+        return out
+    except Exception as e:
+        fn(f"   AVISO: no se filtro raster por fecha ({e}); se filtrara al insertar")
+        return poly_fc
+    finally:
+        try:
+            if arcpy.Exists(lyr):
+                arcpy.management.Delete(lyr)
+        except Exception:
+            pass
+
+
+def _etiquetas_acr_desde_fc(fc_acr, campo_cod, campo_nom, campo_tipo=None):
+    """Lista 'ACR10 — Alto Nanay...' (solo ACR, sin ZI) para el parametro."""
+    if not fc_acr or not campo_cod or not arcpy.Exists(fc_acr):
+        return []
+    campos = {f.name.lower(): f.name for f in arcpy.ListFields(fc_acr)}
+    if campo_cod.lower() not in campos:
+        return []
+    c_cod = campos[campo_cod.lower()]
+    c_nom = campos.get((campo_nom or "").lower(), c_cod)
+    leer = ["OID@", c_cod, c_nom]
+    c_tipo = None
+    if campo_tipo and campo_tipo.lower() in campos:
+        c_tipo = campos[campo_tipo.lower()]
+        leer.append(c_tipo)
+    seen = {}
+    with arcpy.da.SearchCursor(fc_acr, leer) as cur:
+        for row in cur:
+            cod = str(row[1] or "").strip()
+            nom = str(row[2] or cod).strip()
+            tipo_val = str(row[3] or "").strip() if c_tipo else ""
+            if not cod or es_zi_area(cod, tipo_val):
+                continue
+            seen[_cod_acr_canonico(cod) or cod] = f"{cod} — {nom}"
+    return [seen[k] for k in sorted(seen.keys())]
+
+
 # ══════════════════════════════════════════════════════════════════════
 # HERRAMIENTA 1
 # ══════════════════════════════════════════════════════════════════════
@@ -1123,10 +1345,9 @@ class InsertarAlertas(object):
             "Descarga alertas Geobosques del año seleccionado\n"
             "e inserta los polígonos en el FC existente\n"
             "MonitoreoDeforestacion (alertas del año en curso).\n\n"
-            "El histórico 2001-2025 permanece en MonitoreoDeforestacionAcumulado.\n\n"
-            "Procesa ACRs (anp_codi) y Zonas de Influencia (zona_influencia).\n"
-            "Elimina registros previos del mismo año antes de insertar.\n\n"
-            "v5.1: Agrega parametros de fecha inicio y fin del periodo."
+            "Elige una o varias ACR: se corta esa ACR y su zona de influencia.\n"
+            "El periodo filtra por fecha de imagen Geobosques (md_fecimg).\n\n"
+            "v5.9: filtro ACR+ZI y recorte real por fechas del periodo."
         )
         self.canRunInBackground = False
         self._h1_last_gdb = ""
@@ -1141,6 +1362,16 @@ class InsertarAlertas(object):
             direction="Input")
         p0.filter.list = ["Local Database"]
 
+        p_acr = arcpy.Parameter(
+            displayName="ACR a descargar (incluye su zona de influencia)",
+            name="acrs_filtro",
+            datatype="GPString",
+            parameterType="Optional",
+            direction="Input",
+            multiValue=True)
+        p_acr.filter.type = "ValueList"
+        p_acr.filter.list = []
+
         p1 = arcpy.Parameter(
             displayName="* Año de alertas a descargar",
             name="anno",
@@ -1151,9 +1382,9 @@ class InsertarAlertas(object):
         p1.filter.list = ANOS_DISPONIBLES
         p1.value = "2026"
 
-        # ── NUEVO v5.1: Rango de fechas ───────────────────────────────
+        # ── Rango de fechas: filtra md_fecimg (no solo se graba) ──────
         p2 = arcpy.Parameter(
-            displayName="* Fecha inicio del periodo monitoreado",
+            displayName="* Fecha inicio (filtra fecha de imagen Geobosques)",
             name="fecha_ini",
             datatype="GPDate",
             parameterType="Required",
@@ -1161,7 +1392,7 @@ class InsertarAlertas(object):
         p2.value = "01/01/2026"
 
         p3 = arcpy.Parameter(
-            displayName="* Fecha fin del periodo monitoreado",
+            displayName="* Fecha fin (filtra fecha de imagen Geobosques)",
             name="fecha_fin",
             datatype="GPDate",
             parameterType="Required",
@@ -1241,14 +1472,14 @@ class InsertarAlertas(object):
         p10.filter.list = ["Influen", "TipZona", "tipo", "anp_clase", "acr_codi", "CODOBJ"]
 
         p11 = arcpy.Parameter(
-            displayName="Eliminar registros previos del mismo año",
+            displayName="Eliminar registros previos del mismo periodo y ACR",
             name="eliminar_prev",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input")
         p11.value = True
 
-        return [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11]
+        return [p0, p_acr, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11]
 
     def isLicensed(self):
         return True
@@ -1256,20 +1487,21 @@ class InsertarAlertas(object):
     def updateParameters(self, p):
         """Rellena desplegables al seleccionar la GDB; auto-ajusta fechas."""
 
+        # Indices: 0 gdb, 1 acrs, 2 anno, 3 fi, 4 ff, 5 dest, 6 acr,
+        #          7 zon, 8 exa, 9 cod, 10 nom, 11 tipo, 12 elim
         # ── Auto-ajustar fechas al cambiar el año ─────────────────────
-        anno_val = p[1].valueAsText
+        anno_val = p[2].valueAsText
         if anno_val:
-            if not p[2].altered:
-                p[2].value = f"01/01/{anno_val}"
             if not p[3].altered:
-                # Fin: 31/12 del año, pero no mayor que hoy
+                p[3].value = f"01/01/{anno_val}"
+            if not p[4].altered:
                 try:
                     fin_anno = dt(int(anno_val), 12, 31)
                     hoy      = dt.now()
                     fin_uso  = min(fin_anno, hoy)
-                    p[3].value = fin_uso.strftime("%d/%m/%Y")
+                    p[4].value = fin_uso.strftime("%d/%m/%Y")
                 except Exception:
-                    p[3].value = f"31/12/{anno_val}"
+                    p[4].value = f"31/12/{anno_val}"
 
         # ── Rellena desplegables con FCs de la GDB ────────────────────
         gdb_abs = gdb_absoluta_si_existe(p[0].valueAsText)
@@ -1290,10 +1522,10 @@ class InsertarAlertas(object):
                 return
 
             fc_specs = (
-                (4, lambda: resolver_fc_alertas(gdb_abs, fcs)),
-                (5, lambda: resolver_fc_h1(gdb_abs, fcs, "fc_anp")),
-                (6, lambda: resolver_fc_h1(gdb_abs, fcs, "fc_zonif")),
-                (7, lambda: resolver_fc_h1(gdb_abs, fcs, "fc_exa")),
+                (5, lambda: resolver_fc_alertas(gdb_abs, fcs)),
+                (6, lambda: resolver_fc_h1(gdb_abs, fcs, "fc_anp")),
+                (7, lambda: resolver_fc_h1(gdb_abs, fcs, "fc_zonif")),
+                (8, lambda: resolver_fc_h1(gdb_abs, fcs, "fc_exa")),
             )
             for idx, pick_fn in fc_specs:
                 p[idx].filter.list = fcs
@@ -1301,8 +1533,8 @@ class InsertarAlertas(object):
                 if gdb_cambio or cur not in fcs:
                     p[idx].value = pick_fn()
 
-            # Campos del FC ACR (p5) → p8, p9, p10
-            fc_acr = p[5].valueAsText
+            # Campos del FC ACR (p6) → p9, p10, p11
+            fc_acr = p[6].valueAsText
             if fc_acr:
                 ruta = os.path.join(gdb_abs, fc_acr)
                 if arcpy.Exists(ruta):
@@ -1312,9 +1544,9 @@ class InsertarAlertas(object):
                             "OID", "Geometry", "GlobalID")]
                     if campos:
                         campo_specs = (
-                            (8, "campo_cod"),
-                            (9, "campo_nom"),
-                            (10, "campo_tipo"),
+                            (9, "campo_cod"),
+                            (10, "campo_nom"),
+                            (11, "campo_tipo"),
                         )
                         for idx, key in campo_specs:
                             candidatos = h1_cfg.get(key, [])
@@ -1325,18 +1557,29 @@ class InsertarAlertas(object):
                             if gdb_cambio or cur not in campos:
                                 if pick:
                                     p[idx].value = pick
+
+            # Lista ACR (sin ZI) justo despues de la GDB
+            fc_acr = p[6].valueAsText
+            if fc_acr:
+                ruta = os.path.join(gdb_abs, fc_acr)
+                etiq = _etiquetas_acr_desde_fc(
+                    ruta, p[9].valueAsText, p[10].valueAsText, p[11].valueAsText)
+                if etiq:
+                    p[1].filter.list = etiq
+                    if gdb_cambio and not p[1].altered:
+                        p[1].value = etiq
         except Exception:
             pass
 
     def updateMessages(self, p):
         """Valida fechas y que los campos existan en el FC de areas."""
-        fi = _parse_fecha(p[2].value)
-        ff = _parse_fecha(p[3].value)
+        fi = _parse_fecha(p[3].value)
+        ff = _parse_fecha(p[4].value)
         if fi and ff and ff < fi:
-            p[3].setErrorMessage(
+            p[4].setErrorMessage(
                 "La fecha fin no puede ser anterior a la fecha inicio.")
         else:
-            p[3].clearMessage()
+            p[4].clearMessage()
 
         gdb_abs = gdb_absoluta_si_existe(p[0].valueAsText)
         if not gdb_abs:
@@ -1345,23 +1588,23 @@ class InsertarAlertas(object):
             return
         p[0].clearMessage()
 
-        fc_acr = p[5].valueAsText
+        fc_acr = p[6].valueAsText
         if not fc_acr:
             return
         ruta = os.path.join(gdb_abs, fc_acr)
         if not arcpy.Exists(ruta):
-            p[5].setErrorMessage(f"FC no encontrado en la GDB: {fc_acr}")
+            p[6].setErrorMessage(f"FC no encontrado en la GDB: {fc_acr}")
             return
-        p[5].clearMessage()
+        p[6].clearMessage()
 
         campos = {
             f.name for f in arcpy.ListFields(ruta)
             if f.type not in ("OID", "Geometry", "GlobalID")
         }
         for idx, etiqueta in (
-            (8, "codigo"),
-            (9, "nombre"),
-            (10, "tipo/clasificacion"),
+            (9, "codigo"),
+            (10, "nombre"),
+            (11, "tipo/clasificacion"),
         ):
             val = p[idx].valueAsText
             if not val:
@@ -1375,17 +1618,18 @@ class InsertarAlertas(object):
 
     def execute(self, parameters, messages):
         gdb          = parameters[0].valueAsText
-        anno         = int(parameters[1].valueAsText)
-        fecha_ini    = _parse_fecha(parameters[2].value)   # NEW v5.1
-        fecha_fin    = _parse_fecha(parameters[3].value)   # NEW v5.1
-        fc_dest_nom  = parameters[4].valueAsText
-        fc_acr_nom   = parameters[5].valueAsText
-        fc_zon_nom   = parameters[6].valueAsText
-        fc_exa_nom   = parameters[7].valueAsText
-        campo_cod    = parameters[8].valueAsText
-        campo_nom    = parameters[9].valueAsText
-        campo_tipo   = parameters[10].valueAsText
-        elim_prev    = parameters[11].value
+        acrs_sel_txt = _valores_multivalor(parameters[1])
+        anno         = int(parameters[2].valueAsText)
+        fecha_ini    = _parse_fecha(parameters[3].value)
+        fecha_fin    = _parse_fecha(parameters[4].value)
+        fc_dest_nom  = parameters[5].valueAsText
+        fc_acr_nom   = parameters[6].valueAsText
+        fc_zon_nom   = parameters[7].valueAsText
+        fc_exa_nom   = parameters[8].valueAsText
+        campo_cod    = parameters[9].valueAsText
+        campo_nom    = parameters[10].valueAsText
+        campo_tipo   = parameters[11].valueAsText
+        elim_prev    = parameters[12].value
 
         arcpy.env.overwriteOutput = True
         arcpy.env.workspace = gdb
@@ -1395,14 +1639,19 @@ class InsertarAlertas(object):
 
         try:
             msg("=" * 65)
-            msg(f"ATD H1 v5.8 — INSERTAR ALERTAS {anno}")
+            msg(f"ATD H1 v5.9 — INSERTAR ALERTAS {anno}")
             msg(f"GFP Subnacional - {REGION_NOMBRE}")
             msg("=" * 65)
             msg(f"   GDB destino  : {gdb}")
             msg(f"   FC destino   : {fc_dest_nom}")
             msg(f"   Año alertas  : {anno}")
             msg(f"   Periodo      : {_fmt_fecha(fecha_ini)} → {_fmt_fecha(fecha_fin)}")
+            msg("   Filtro fecha : md_fecimg (fecha de imagen Geobosques)")
             msg(f"   FC ACR/ZI    : {fc_acr_nom}")
+            if acrs_sel_txt:
+                msg(f"   ACR filtro   : {', '.join(acrs_sel_txt)}")
+            else:
+                msg("   ACR filtro   : TODAS (con su ZI)")
             msg("")
 
             # ── Rutas ─────────────────────────────────────────────────
@@ -1465,6 +1714,9 @@ class InsertarAlertas(object):
             campo_grid_poly = _campo_gridcode(poly_raw)
             _asignar_fecha_a_poligonos(
                 poly_raw, mapa_fechas, campo_grid_poly, anno, msg)
+            poly_raw = _filtrar_poligonos_por_periodo(
+                poly_raw, fecha_ini, fecha_fin, msg)
+            campo_grid_poly = _campo_gridcode(poly_raw)
             cod_md_fuente = _resolver_md_fuente_landsat(gdb, fc_dest, msg)
             info_fue = _info_campo(fc_dest, "md_fuente")
             dom_fue = info_fue["dominio"] if info_fue else ""
@@ -1489,31 +1741,14 @@ class InsertarAlertas(object):
             )
             _asegurar_dominio_zonif(gdb, fc_dest, fc_zon, campo_tz_pre)
 
-            # ── PASO 4: Eliminar registros previos del año ────────────
+            # ── PASO 4: Eliminar previos (se ejecuta tras elegir ACR) ─
             if elim_prev:
                 msg("")
-                msg(f"[4/7] Eliminando registros previos del año {anno}...")
-                lyr_del = "__lyr_del_anno__"
-                try:
-                    if arcpy.Exists(lyr_del):
-                        arcpy.management.Delete(lyr_del)
-                    arcpy.management.MakeFeatureLayer(
-                        fc_dest, lyr_del,
-                        where_clause=f"md_anno = {anno}")
-                    cnt_del = int(arcpy.management.GetCount(lyr_del)[0])
-                    if cnt_del > 0:
-                        arcpy.management.DeleteFeatures(lyr_del)
-                        msg(f"   Eliminados: {cnt_del:,} registros del {anno}")
-                    else:
-                        msg(f"   Sin registros previos del {anno}")
-                except Exception as e:
-                    arcpy.AddWarning(f"   No se pudo eliminar previos: {e}")
-                finally:
-                    try:
-                        if arcpy.Exists(lyr_del):
-                            arcpy.management.Delete(lyr_del)
-                    except Exception:
-                        pass
+                msg(
+                    f"[4/7] Se eliminaran previos del periodo "
+                    f"{_fmt_fecha(fecha_ini)} → {_fmt_fecha(fecha_fin)} "
+                    "solo en las ACR seleccionadas (despues de leer areas)."
+                )
             else:
                 msg("")
                 msg("[4/7] Manteniendo registros previos (elim_prev=False)")
@@ -1587,11 +1822,62 @@ class InsertarAlertas(object):
             msg(f"   Zonas de Influencia (ZI) : {n_zi}")
             msg(f"   Total areas              : {len(areas)}")
 
+            zi_map = (
+                REGION_CONFIGS.get(_REGION_ACTIVA or "", {})
+                .get("zi_codi_to_acr", {}))
+            nomb_to_codi = (
+                REGION_CONFIGS.get(_REGION_ACTIVA or "", {})
+                .get("acr_nomb_to_codi", {}))
+            cods_sel = _codigos_acr_desde_filtro(
+                acrs_sel_txt, areas, nomb_to_codi)
+            if acrs_sel_txt and not cods_sel:
+                arcpy.AddError(
+                    "No se reconocio ninguna ACR del filtro. "
+                    "Elige p. ej. Medio Putumayo Algodón o Alto Nanay.")
+                return
+            if cods_sel:
+                areas = _filtrar_areas_por_acr(areas, cods_sel, zi_map)
+                n_acr = sum(1 for a in areas if not a["es_zi"])
+                n_zi  = sum(1 for a in areas if a["es_zi"])
+                msg(
+                    f"   Filtro ACR aplicado      : "
+                    f"{', '.join(sorted({_cod_acr_canonico(c) for c in cods_sel}))}"
+                )
+                msg(f"   Areas a cortar           : {n_acr} ACR + {n_zi} ZI")
+
             if not areas:
                 arcpy.AddError(
                     "No se encontraron areas en el FC. "
-                    "Revisa el campo codigo.")
+                    "Revisa el campo codigo o el filtro de ACR.")
                 return
+
+            if elim_prev:
+                lyr_del = "__lyr_del_periodo__"
+                try:
+                    if arcpy.Exists(lyr_del):
+                        arcpy.management.Delete(lyr_del)
+                    where_del = _where_eliminar_previos(
+                        fc_dest, anno, fecha_ini, fecha_fin, cods_sel or None)
+                    msg(f"   Eliminar WHERE : {where_del}")
+                    arcpy.management.MakeFeatureLayer(
+                        fc_dest, lyr_del, where_clause=where_del)
+                    cnt_del = int(arcpy.management.GetCount(lyr_del)[0])
+                    if cnt_del > 0:
+                        arcpy.management.DeleteFeatures(lyr_del)
+                        msg(
+                            f"   Eliminados: {cnt_del:,} registros "
+                            "(mismo año, periodo y ACR)"
+                        )
+                    else:
+                        msg("   Sin registros previos del periodo/ACR")
+                except Exception as e:
+                    arcpy.AddWarning(f"   No se pudo eliminar previos: {e}")
+                finally:
+                    try:
+                        if arcpy.Exists(lyr_del):
+                            arcpy.management.Delete(lyr_del)
+                    except Exception:
+                        pass
 
             # ── PASO 7: Insertar en FC acumulado ──────────────────────
             msg("")
@@ -1669,9 +1955,7 @@ class InsertarAlertas(object):
             mes_actual   = dt.now().month
             total_insert = 0
             n_con_fecha  = 0
-            zi_map = (
-                REGION_CONFIGS.get(_REGION_ACTIVA or "", {})
-                .get("zi_codi_to_acr", {}))
+            n_omit_fecha = 0
 
             # Campos minimos en insert (sector/zonif/exa van en batch al final)
             # Evita insertRow NULL por dominio y consultas espaciales por fila.
@@ -1682,13 +1966,13 @@ class InsertarAlertas(object):
                 shape = area["geom"]
 
                 if es_zi:
-                    lbl = cod.upper()
+                    lbl = str(cod or "").strip().upper()
                     if not lbl.startswith("ZI "):
                         lbl = (
                             "ZI "
                             + lbl.replace("ZI_", "").replace("_", " ").strip()
                         )
-                    cod_acr_padre = zi_map.get(lbl) or zi_map.get(cod) or cod
+                    cod_acr_padre = _cod_acr_padre(cod, True, zi_map) or cod
                     zona_val = lbl if " " in lbl else f"ZI {lbl[2:].strip()}"
                 else:
                     cod_acr_padre = cod
@@ -1748,6 +2032,15 @@ class InsertarAlertas(object):
                             if not fec_img:
                                 fec_img = _fecha_desde_gridcode(
                                     mapa_fechas, grid_val, anno)
+
+                            en_periodo = _fecha_en_periodo(
+                                fec_img, fecha_ini, fecha_fin)
+                            if en_periodo is False:
+                                n_omit_fecha += 1
+                                continue
+                            if en_periodo is None and fecha_ini and fecha_fin:
+                                n_omit_fecha += 1
+                                continue
 
                             try:
                                 cent = geom.centroid
@@ -1831,14 +2124,17 @@ class InsertarAlertas(object):
             # ── RESUMEN FINAL ─────────────────────────────────────────
             msg("")
             msg("=" * 65)
-            msg(f"ATD H1 v5.8 — COMPLETADO")
+            msg(f"ATD H1 v5.9 — COMPLETADO")
             msg("=" * 65)
             msg(f"   Año procesado      : {anno}")
             msg(f"   Periodo            : "
                 f"{_fmt_fecha(fecha_ini)} → {_fmt_fecha(fecha_fin)}")
+            msg("   Filtro fecha       : md_fecimg (Geobosques)")
             msg(f"   Areas procesadas   : {len(areas)}  "
                 f"({n_acr} ACR + {n_zi} ZI)")
             msg(f"   Alertas insertadas : {total_insert:,}")
+            if n_omit_fecha:
+                msg(f"   Omitidas x fecha   : {n_omit_fecha:,} (fuera del periodo)")
             msg(f"   FC destino         : {fc_dest_nom}")
             msg(f"   md_fuente (Fuente) : {cod_md_fuente} = "
                 f"{desc_fue or 'Landsat'} ({n_fue:,} registros)")

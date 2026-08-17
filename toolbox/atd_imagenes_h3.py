@@ -284,9 +284,9 @@ def _dibujar_vector_en_draw(draw, geom, bounds, w, h, estilo="circulo_limpio"):
         if len(ext) < 3:
             continue
         closed = ext + [ext[0]]
-        draw.polygon(ext, fill=(227, 30, 58, 70))
-        draw.line(closed, fill=(255, 255, 255, 255), width=4)
-        draw.line(closed, fill=(196, 30, 58, 255), width=2)
+        draw.polygon(ext, fill=(227, 30, 58, 95))
+        draw.line(closed, fill=(255, 255, 255, 255), width=7)
+        draw.line(closed, fill=(196, 30, 58, 255), width=4)
 
 
 def quemar_vector_alerta_en_imagen(
@@ -338,7 +338,7 @@ def quemar_vector_alerta_en_imagen(
     return np.array(out)
 
 
-def bounds_imagen_desde_meta(meta, geom_wgs, epsg_utm=32718, buffer_m=600):
+def bounds_imagen_desde_meta(meta, geom_wgs, epsg_utm=32718, buffer_m=320):
     """Extent de imagen: meta.bbox_wgs84 o buffer alrededor de la alerta."""
     if meta:
         b = meta.get("bbox_wgs84") or meta.get("bbox")
@@ -356,16 +356,128 @@ def bounds_imagen_desde_meta(meta, geom_wgs, epsg_utm=32718, buffer_m=600):
         pass
     try:
         xmin, ymin, xmax, ymax = geom_wgs.bounds
-        pad = 0.002
+        pad = 0.0012
         return (xmin - pad, xmax + pad, ymin - pad, ymax + pad), 4326
     except Exception:
         return None, 4326
 
 
+def _transformar_geom(geom, epsg_geom, epsg_bounds):
+    if geom is None or epsg_geom == epsg_bounds:
+        return geom
+    try:
+        import pyproj
+        from shapely.ops import transform as shp_transform
+
+        tr = pyproj.Transformer.from_crs(
+            epsg_geom, epsg_bounds, always_xy=True)
+        return shp_transform(tr.transform, geom)
+    except Exception:
+        return geom
+
+
+def _bbox_pixeles_geom(geom, bounds, w, h):
+    pts = []
+    for poly in _poligonos_shapely(geom):
+        pts.extend(_ring_a_pixeles(poly.exterior.coords, bounds, w, h))
+    if not pts:
+        return None
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def recortar_zoom_alerta(pil, bounds, geom, margen_factor=3.3, min_lado_px=160):
+    """Recorta la imagen para que el poligono de alerta quede grande y centrado."""
+    if pil is None or bounds is None or geom is None:
+        return pil, bounds
+    w, h = pil.size
+    if w < 40 or h < 40:
+        return pil, bounds
+    box = _bbox_pixeles_geom(geom, bounds, w, h)
+    if not box:
+        return pil, bounds
+    x0, y0, x1, y1 = box
+    bw = max(x1 - x0, 6)
+    bh = max(y1 - y0, 6)
+    frac = max(bw / w, bh / h)
+    if frac >= 0.32:
+        factor = 2.15
+    else:
+        factor = margen_factor
+    lado = max(bw, bh) * factor
+    lado = max(lado, min_lado_px)
+    if lado >= 0.95 * min(w, h):
+        return pil, bounds
+    cx = (x0 + x1) / 2.0
+    cy = (y0 + y1) / 2.0
+    half = lado / 2.0
+    cx0 = int(round(cx - half))
+    cy0 = int(round(cy - half))
+    cx1 = int(round(cx + half))
+    cy1 = int(round(cy + half))
+    if cx0 < 0:
+        cx1 = min(w, cx1 - cx0)
+        cx0 = 0
+    if cy0 < 0:
+        cy1 = min(h, cy1 - cy0)
+        cy0 = 0
+    if cx1 > w:
+        cx0 = max(0, cx0 - (cx1 - w))
+        cx1 = w
+    if cy1 > h:
+        cy0 = max(0, cy0 - (cy1 - h))
+        cy1 = h
+    if cx1 - cx0 < 40 or cy1 - cy0 < 40:
+        return pil, bounds
+    cropped = pil.crop((cx0, cy0, cx1, cy1))
+    xmin, xmax, ymin, ymax = bounds
+    new_xmin = xmin + (cx0 / float(w)) * (xmax - xmin)
+    new_xmax = xmin + (cx1 / float(w)) * (xmax - xmin)
+    new_ymax = ymax - (cy0 / float(h)) * (ymax - ymin)
+    new_ymin = ymax - (cy1 / float(h)) * (ymax - ymin)
+    return cropped, (new_xmin, new_xmax, new_ymin, new_ymax)
+
+
+def aplicar_vector_y_zoom(
+    img_rgb,
+    bounds,
+    geom,
+    epsg_bounds=4326,
+    epsg_geom=4326,
+    estilo="poligono",
+    zoom=True,
+):
+    """Recorta (zoom) y dibuja el poligono de la alerta sobre la imagen."""
+    try:
+        from PIL import Image, ImageDraw
+        import numpy as np
+    except ImportError:
+        return img_rgb
+
+    if img_rgb is None or geom is None or bounds is None:
+        return img_rgb
+
+    as_pil = hasattr(img_rgb, "size")
+    pil = img_rgb.convert("RGBA") if as_pil else Image.fromarray(img_rgb).convert("RGBA")
+    g = _transformar_geom(geom, epsg_geom, epsg_bounds)
+    bnds = bounds
+    if zoom:
+        pil_rgb = pil.convert("RGB")
+        pil_rgb, bnds = recortar_zoom_alerta(pil_rgb, bounds, g)
+        pil = pil_rgb.convert("RGBA")
+
+    draw = ImageDraw.Draw(pil, "RGBA")
+    w, h = pil.size
+    _dibujar_vector_en_draw(draw, g, bnds, w, h, estilo=estilo or "poligono")
+    out = pil.convert("RGB")
+    return out if as_pil else np.array(out)
+
+
 def marcar_png_con_alerta(
     ruta_png, geom_wgs, meta=None, epsg_utm=32718, estilo="poligono",
 ):
-    """Aplica vector rojo a PNG existente (H2 -> H3). Devuelve ruta marcada."""
+    """Aplica zoom + vector rojo a PNG existente (H2 -> H3). Devuelve ruta marcada."""
     if not ruta_png or not os.path.isfile(ruta_png) or geom_wgs is None:
         return ruta_png
     try:
@@ -378,9 +490,10 @@ def marcar_png_con_alerta(
         return ruta_png
     try:
         arr = np.array(Image.open(ruta_png).convert("RGB"))
-        arr_m = quemar_vector_alerta_en_imagen(
+        arr_m = aplicar_vector_y_zoom(
             arr, bounds, geom_wgs,
-            epsg_bounds=epsg_b, epsg_geom=4326, estilo=estilo or "poligono")
+            epsg_bounds=epsg_b, epsg_geom=4326,
+            estilo=estilo or "poligono", zoom=True)
         base, ext = os.path.splitext(ruta_png)
         ruta_out = f"{base}_vec{ext}"
         Image.fromarray(arr_m).save(ruta_out, format="PNG", optimize=True)
