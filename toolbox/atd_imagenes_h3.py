@@ -458,7 +458,7 @@ def aplicar_vector_y_zoom(
     if img_rgb is None or geom is None or bounds is None:
         return img_rgb
 
-    as_pil = hasattr(img_rgb, "size")
+    as_pil = hasattr(img_rgb, "convert")
     pil = img_rgb.convert("RGBA") if as_pil else Image.fromarray(img_rgb).convert("RGBA")
     g = _transformar_geom(geom, epsg_geom, epsg_bounds)
     bnds = bounds
