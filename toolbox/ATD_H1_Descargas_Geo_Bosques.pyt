@@ -42,6 +42,8 @@ from atd_region_config import (
     REGION_NOMBRE,
     REGION_CONFIGS,
     _REGION_ACTIVA,
+    ANP_CODI_ALIASES,
+    ACR_NOMBRES,
 )
 
 
@@ -1113,13 +1115,22 @@ def _asignar_fecha_a_poligonos(poly_fc, mapa_fechas, campo_grid, anno, msg_fn=No
 
 
 def _cod_acr_canonico(cod):
-    """Normaliza ACR09 / ACR 9 / acr10 → ACR09 / ACR10."""
+    """Normaliza ACR09 / ACR18 → ACR09 / ACR34 (alias institucional)."""
     s = str(cod or "").strip().upper()
+    if "—" in s:
+        s = s.split("—", 1)[0].strip()
+    elif " - " in s:
+        s = s.split(" - ", 1)[0].strip()
     m = re.search(r"ACR\s*(\d+)", s)
-    if not m:
-        return str(cod or "").strip()
-    n = int(m.group(1))
-    return f"ACR{n:02d}" if n < 10 else f"ACR{n}"
+    if m:
+        n = int(m.group(1))
+        s = f"ACR{n:02d}" if n < 10 else f"ACR{n}"
+    alias = ANP_CODI_ALIASES.get(s)
+    if alias:
+        return alias
+    if s in ACR_NOMBRES:
+        return s
+    return s or str(cod or "").strip()
 
 
 def _valores_multivalor(param):
@@ -1246,11 +1257,16 @@ def _where_eliminar_previos(fc_dest, anno, fecha_ini, fecha_fin, cods_acr):
         c_anp = campos.get("anp_codi", "anp_codi")
         vals = []
         for c in sorted(cods_acr):
-            raw = str(c).replace("'", "''")
-            vals.append(f"'{raw}'")
-            can = _cod_acr_canonico(c).replace("'", "''")
-            if can and f"'{can}'" not in vals:
-                vals.append(f"'{can}'")
+            for x in (c, _cod_acr_canonico(c)):
+                raw = str(x or "").replace("'", "''")
+                if raw and f"'{raw}'" not in vals:
+                    vals.append(f"'{raw}'")
+            can = _cod_acr_canonico(c)
+            for old, nuevo in (ANP_CODI_ALIASES or {}).items():
+                if nuevo == can:
+                    raw = str(old).replace("'", "''")
+                    if raw and f"'{raw}'" not in vals:
+                        vals.append(f"'{raw}'")
         parts.append(f"{c_anp} IN ({','.join(vals)})")
     if fecha_ini and fecha_fin and "md_fecimg" in campos:
         c_f = campos["md_fecimg"]
@@ -1339,7 +1355,10 @@ def _etiquetas_acr_desde_fc(fc_acr, campo_cod, campo_nom, campo_tipo=None):
             tipo_val = str(row[3] or "").strip() if c_tipo else ""
             if not cod or es_zi_area(cod, tipo_val):
                 continue
-            seen[_cod_acr_canonico(cod) or cod] = f"{cod} — {nom}"
+            can = _cod_acr_canonico(cod) or cod
+            nom_show = ACR_NOMBRES.get(can) or nom
+            nom_show = re.sub(r"^ACR\s+", "", str(nom_show), flags=re.I).strip() or nom
+            seen[can] = f"{can} — {nom_show}"
     return [seen[k] for k in sorted(seen.keys())]
 
 
@@ -2068,7 +2087,7 @@ class InsertarAlertas(object):
                             fila = [None] * len(campos_insert)
                             fila[0] = geom
                             if i_acod >= 0:
-                                fila[i_acod] = cod_acr_padre
+                                fila[i_acod] = _cod_acr_canonico(cod_acr_padre)
                             if i_zcod >= 0:
                                 fila[i_zcod] = None
                             if i_zona >= 0:
