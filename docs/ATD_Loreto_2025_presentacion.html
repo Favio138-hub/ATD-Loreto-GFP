@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATD Loreto 2025 — Línea base · GFP Subnacional</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --azul: #1B4F72;
+    --azul2: #0E2F44;
+    --nat: #2E7D32;
+    --ant: #C62828;
+    --fal: #616161;
+    --zi: #1565C0;
+    --bg: #F4F6F8;
+    --txt: #1A2B3C;
+    --dim: #5A6B7D;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; color: var(--txt); background: var(--bg); }
+  header {
+    background: var(--azul2); color: #fff; padding: 28px 36px 22px;
+  }
+  header h1 { font-size: 22px; letter-spacing: .3px; }
+  header p { margin-top: 6px; font-size: 13px; opacity: .9; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 18px 48px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0 22px; }
+  .kpi { background: #fff; border: 1px solid #D5DDE3; padding: 14px 16px; }
+  .kpi .lab { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .4px; }
+  .kpi .num { font-size: 26px; font-weight: 700; margin-top: 4px; color: var(--azul2); }
+  .kpi .sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
+  .kpi.nat .num { color: var(--nat); }
+  .kpi.ant .num { color: var(--ant); }
+  h2 { font-size: 16px; color: var(--azul); margin: 22px 0 10px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid #D5DDE3; padding: 14px 16px 18px; }
+  .card h3 { font-size: 13px; color: var(--azul2); margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+  th, td { border: 1px solid #D5DDE3; padding: 7px 8px; text-align: right; }
+  th { background: var(--azul); color: #fff; text-align: center; font-weight: 600; }
+  td.l, th.l { text-align: left; }
+  tr.tot td { background: #EAF0F4; font-weight: 700; }
+  .note { font-size: 12px; color: var(--dim); margin-top: 10px; line-height: 1.45; }
+  .ok { color: var(--nat); font-weight: 700; }
+  .warn { color: #B45309; font-weight: 700; }
+  footer { font-size: 11px; color: var(--dim); margin-top: 28px; }
+  @media (max-width: 900px) {
+    .kpis, .grid2 { grid-template-columns: 1fr 1fr; }
+  }
+  @media print {
+    body { background: #fff; }
+    header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .wrap { padding: 8px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Alertas Tempranas de Deforestación · Loreto 2025</h1>
+  <p>Fuente: MonitoreoDeforestacionAcumulado · GDB Linea_base_deforestación_Loreto.gdb (corregida ACR/ZI) · GFP Subnacional / SECO</p>
+</header>
+<div class="wrap">
+
+  <h2>1. Cifra para presentar (solo 4 ACR, sin ZI, sin falsa alerta)</h2>
+  <div class="kpis">
+    <div class="kpi">
+      <div class="lab">Total 2025 (nat + ant)</div>
+      <div class="num">40.77 ha</div>
+      <div class="sub">262 polígonos clasificados</div>
+    </div>
+    <div class="kpi nat">
+      <div class="lab">Natural</div>
+      <div class="num">14.74 ha</div>
+      <div class="sub">81 polígonos · 36%</div>
+    </div>
+    <div class="kpi ant">
+      <div class="lab">Antrópico</div>
+      <div class="num">26.03 ha</div>
+      <div class="sub">181 polígonos · 64%</div>
+    </div>
+    <div class="kpi">
+      <div class="lab">vs 2024 (mismo filtro)</div>
+      <div class="num">+39%</div>
+      <div class="sub">2024 fue 29.26 ha</div>
+    </div>
+  </div>
+  <p class="note">Frase: <strong>Loreto 2025 (4 ACR): 40.77 ha, de las cuales 14.74 son naturales y 26.03 antrópicas.</strong> Se excluyen 31.15 ha de falsa alerta (237 polígonos).</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Composición 2025 · solo ACR (ha)</h3>
+      <canvas id="pieAcr" height="220"></canvas>
+    </div>
+    <div class="card">
+      <h3>Por ACR · natural vs antrópico (ha)</h3>
+      <canvas id="barAcr" height="220"></canvas>
+    </div>
+  </div>
+
+  <h2>2. Detalle por ACR (2025)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th class="l">ACR</th>
+        <th>Total ha</th>
+        <th>Natural ha</th>
+        <th>Antrópico ha</th>
+        <th>n Natural</th>
+        <th>n Antrópico</th>
+        <th>Falsa alerta ha</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="l">ACR17 Maijuna Kichwa</td>
+        <td>27.25</td><td>7.98</td><td>19.27</td><td>32</td><td>100</td><td>20.43</td>
+      </tr>
+      <tr>
+        <td class="l">ACR10 Alto Nanay Pintuyacu Chambira</td>
+        <td>9.48</td><td>5.45</td><td>4.02</td><td>37</td><td>60</td><td>0.50</td>
+      </tr>
+      <tr>
+        <td class="l">ACR09 Ampiyacu Apayacu</td>
+        <td>2.87</td><td>0.25</td><td>2.61</td><td>4</td><td>19</td><td>0.98</td>
+      </tr>
+      <tr>
+        <td class="l">ACR04 Comunal Tamshiyacu Tahuayo</td>
+        <td>1.17</td><td>1.05</td><td>0.12</td><td>8</td><td>2</td><td>9.06</td>
+      </tr>
+      <tr>
+        <td class="l">ACR18 Medio Putumayo Algodón</td>
+        <td>0.00</td><td>0.00</td><td>0.00</td><td>0</td><td>0</td><td>0.18</td>
+      </tr>
+      <tr class="tot">
+        <td class="l">TOTAL 4 ACR (sin falsa)</td>
+        <td>40.77</td><td>14.74</td><td>26.03</td><td>81</td><td>181</td><td>31.15</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="grid2" style="margin-top:16px">
+    <div class="card">
+      <h3>Causas antrópicas 2025 · solo ACR (ha)</h3>
+      <canvas id="barCausa" height="220"></canvas>
+    </div>
+    <div class="card">
+      <h3>Estacionalidad 2025 · solo ACR (ha nat+ant)</h3>
+      <canvas id="lineMes" height="220"></canvas>
+    </div>
+  </div>
+
+  <h2>3. Si se incluye Zona de Influencia (ACR + ZI, 2025)</h2>
+  <div class="kpis">
+    <div class="kpi">
+      <div class="lab">Total nat + ant</div>
+      <div class="num">265.00 ha</div>
+      <div class="sub">1 353 polígonos</div>
+    </div>
+    <div class="kpi nat">
+      <div class="lab">Natural</div>
+      <div class="num">77.02 ha</div>
+      <div class="sub">275 polígonos</div>
+    </div>
+    <div class="kpi ant">
+      <div class="lab">Antrópico</div>
+      <div class="num">187.98 ha</div>
+      <div class="sub">1 078 polígonos</div>
+    </div>
+    <div class="kpi">
+      <div class="lab">Ámbito</div>
+      <div class="num">71.9 / 287.6</div>
+      <div class="sub">ha ACR / ha ZI (todas las causas)</div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>ACR vs ZI 2025 · hectáreas (incluye falsa alerta en el total de ámbito)</h3>
+    <canvas id="barAmbito" height="120"></canvas>
+  </div>
+  <p class="note">En ZI el antrópico es mayor (agricultura). El dashboard institucional suele mostrar <strong>ACR + ZI</strong> con filtro de año. Para SERNANP “solo ACR” usa la cifra de <strong>40.77 ha</strong>.</p>
+
+  <h2>4. ¿El dashboard GFP está bien?</h2>
+  <table>
+    <thead>
+      <tr><th class="l">Chequeo</th><th class="l">Hallazgo</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="l">Página GFP</td>
+        <td class="l"><a href="https://www.gfpsubnacional.pe/dashboard-linea-base-de-deforestacion/">gfpsubnacional.pe/dashboard-linea-base-de-deforestacion</a> — hoy no muestra indicadores (página institucional casi vacía).</td>
+      </tr>
+      <tr>
+        <td class="l">App real</td>
+        <td class="l">El visor vive en <a href="https://acr-dashboard-5iqz.onrender.com/">acr-dashboard-5iqz.onrender.com</a>. Usa <em>MonitoreoDeforestacionAcumulado</em>, 2001–2025, 9 ACR (Loreto, San Martín, Cusco) y filtro ACR/ZI. Metodología alineada con la GDB.</td>
+      </tr>
+      <tr>
+        <td class="l">Cifras 2025 Loreto</td>
+        <td class="l">Los KPI del Render se cargan por API (no se publican fijos). Esta ficha sí sale directo de tu GDB corregida. Si el dashboard aún usa recorte espacial antiguo, puede diferir ~unas hectáreas; el antrópico 2025 ACR aquí es <strong>26.03 ha</strong>.</td>
+      </tr>
+      <tr>
+        <td class="l">Recomendación</td>
+        <td class="l"><span class="warn">Embeber el dashboard Render en la web GFP</span> y filtrar Loreto · 2025 · solo ACR para cuadrar con 40.77 ha. No presentar la página GFP tal como está hoy.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <footer>
+    GFP Subnacional · Cooperación Suiza SECO / Basel Institute on Governance · GDB ATD Loreto · md_anno = 2025 · Natural = md_causa 14 · Antrópico = resto excepto 16/99 · zi_codi vacío = ACR.
+  </footer>
+</div>
+<script>
+const nat = '#2E7D32', ant = '#C62828', fal = '#9E9E9E';
+new Chart(document.getElementById('pieAcr'), {
+  type: 'doughnut',
+  data: {
+    labels: ['Natural 14.74 ha', 'Antrópico 26.03 ha'],
+    datasets: [{ data: [14.74, 26.03], backgroundColor: [nat, ant], borderWidth: 0 }]
+  },
+  options: { plugins: { legend: { position: 'bottom' } }, cutout: '55%' }
+});
+new Chart(document.getElementById('barAcr'), {
+  type: 'bar',
+  data: {
+    labels: ['Maijuna Kichwa', 'Alto Nanay', 'Ampiyacu', 'Tahuayo'],
+    datasets: [
+      { label: 'Natural (ha)', data: [7.98, 5.45, 0.25, 1.05], backgroundColor: nat },
+      { label: 'Antrópico (ha)', data: [19.27, 4.02, 2.61, 0.12], backgroundColor: ant }
+    ]
+  },
+  options: {
+    responsive: true,
+    scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'Hectáreas' } } },
+    plugins: { legend: { position: 'bottom' } }
+  }
+});
+new Chart(document.getElementById('barCausa'), {
+  type: 'bar',
+  data: {
+    labels: ['Agricultura', 'Transporte', 'Extr. forestal', 'Minería'],
+    datasets: [{ label: 'ha', data: [24.47, 0.91, 0.51, 0.14], backgroundColor: ant }]
+  },
+  options: {
+    indexAxis: 'y',
+    plugins: { legend: { display: false } },
+    scales: { x: { title: { display: true, text: 'Hectáreas' } } }
+  }
+});
+new Chart(document.getElementById('lineMes'), {
+  type: 'line',
+  data: {
+    labels: ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'],
+    datasets: [
+      { label: 'Natural', data: [3.40, 0.36, 0, 0.73, 0, 0.57, 0, 0.11, 6.28, 3.30, 0, 0], borderColor: nat, tension: .2 },
+      { label: 'Antrópico', data: [3.69, 0, 2.45, 0.01, 0, 0.27, 0, 1.21, 11.80, 6.39, 0, 0.22], borderColor: ant, tension: .2 }
+    ]
+  },
+  options: {
+    plugins: { legend: { position: 'bottom' } },
+    scales: { y: { title: { display: true, text: 'Hectáreas' } } }
+  }
+});
+new Chart(document.getElementById('barAmbito'), {
+  type: 'bar',
+  data: {
+    labels: ['Ámbito ACR', 'Ámbito ZI'],
+    datasets: [
+      { label: 'Natural', data: [14.74, 62.28], backgroundColor: nat },
+      { label: 'Antrópico', data: [26.03, 161.95], backgroundColor: ant }
+    ]
+  },
+  options: {
+    scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'Hectáreas' } } },
+    plugins: { legend: { position: 'bottom' } }
+  }
+});
+</script>
+</body>
+</html>

@@ -48,6 +48,22 @@ Paquete **autocontenido y listo para ArcGIS Pro** que implementa el flujo instit
 
 ---
 
+## Ejemplo final del reporte
+
+Así se ve el **PDF institucional** que genera H3 (alerta `ACR09 - 2026 - 001`, Ampiyacu Apayacu): mapa de contexto, imágenes Sentinel-2 con polígono rojo, metadatos y logos actualizados.
+
+<p align="center">
+  <a href="docs/EJEMPLO_reporte_ATD_Loreto.pdf">
+    <img src="docs/EJEMPLO_reporte_ATD_Loreto.png" alt="Ejemplo de reporte ATD Loreto — ACR Ampiyacu Apayacu" width="820" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="docs/EJEMPLO_reporte_ATD_Loreto.pdf"><strong>Descargar PDF de ejemplo</strong></a>
+</p>
+
+---
+
 ## Demo 5 minutos
 
 Prueba rápida **sin conexión a Geobosques** — ideal para ver el visor y el PDF con datos ya cargados en la GDB.

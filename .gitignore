@@ -10,6 +10,7 @@ documentacion_atd/*
 # Demo institucional (sí versionar)
 !docs/
 !docs/EJEMPLO_reporte_ATD_Loreto.pdf
+!docs/EJEMPLO_reporte_ATD_Loreto.png
 
 # Mantener carpetas vacías
 !pdfs/.gitkeep
