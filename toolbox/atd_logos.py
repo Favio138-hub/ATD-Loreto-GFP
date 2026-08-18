@@ -12,7 +12,6 @@ _LOGO_EXT = (".png", ".jpeg", ".jpg", ".jpg.jpeg")
 # GORE por region (nombres reales en logos/)
 _REGION_GORE = {
     "loreto": [
-        "LOGO ARA.png",
         "logo_gore.png",
         "logo_gore",
     ],
