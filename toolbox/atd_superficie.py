@@ -28,6 +28,33 @@ def _campos(fc):
     return {f.name.lower(): f.name for f in arcpy.ListFields(fc)}
 
 
+def _es_lock(ex) -> bool:
+    s = str(ex).lower()
+    return "lock" in s or "cannot acquire" in s
+
+
+def leer_ha_geodesica(fc, where=None) -> dict:
+    """OID -> ha (2 cifras). Solo lectura: funciona con la capa abierta en Pro."""
+    import arcpy
+    out = {}
+    if not fc or not arcpy.Exists(fc):
+        return out
+    oid = arcpy.Describe(fc).OIDFieldName
+    with arcpy.da.SearchCursor(fc, [oid, "SHAPE@"], where) as cur:
+        for oid_val, geom in cur:
+            if geom is None:
+                continue
+            try:
+                ha = geom.getArea("GEODESIC", "HECTARES")
+            except Exception:
+                try:
+                    ha = geom.getArea("PLANAR", "HECTARES")
+                except Exception:
+                    continue
+            out[int(oid_val)] = redondear_ha(ha or 0)
+    return out
+
+
 def actualizar_md_sup(fc, where=None) -> int:
     """Escribe md_sup (ha geodesic) y centroide md_este/md_norte."""
     import arcpy
@@ -46,29 +73,34 @@ def actualizar_md_sup(fc, where=None) -> int:
         i_norte = len(upd)
         upd.append(campos["md_norte"])
     n = 0
-    with arcpy.da.UpdateCursor(fc, upd, where) as cur:
-        for row in cur:
-            geom = row[1]
-            if geom is None:
-                continue
-            try:
-                ha = geom.getArea("GEODESIC", "HECTARES")
-            except Exception:
-                try:
-                    ha = geom.getArea("PLANAR", "HECTARES")
-                except Exception:
+    try:
+        with arcpy.da.UpdateCursor(fc, upd, where) as cur:
+            for row in cur:
+                geom = row[1]
+                if geom is None:
                     continue
-            row[2] = redondear_ha(ha or 0)
-            try:
-                cent = geom.centroid
-                if i_este is not None:
-                    row[i_este] = round(cent.X, 1)
-                if i_norte is not None:
-                    row[i_norte] = round(cent.Y, 1)
-            except Exception:
-                pass
-            cur.updateRow(row)
-            n += 1
+                try:
+                    ha = geom.getArea("GEODESIC", "HECTARES")
+                except Exception:
+                    try:
+                        ha = geom.getArea("PLANAR", "HECTARES")
+                    except Exception:
+                        continue
+                row[2] = redondear_ha(ha or 0)
+                try:
+                    cent = geom.centroid
+                    if i_este is not None:
+                        row[i_este] = round(cent.X, 1)
+                    if i_norte is not None:
+                        row[i_norte] = round(cent.Y, 1)
+                except Exception:
+                    pass
+                cur.updateRow(row)
+                n += 1
+    except Exception as ex:
+        if _es_lock(ex):
+            return 0
+        raise
     return n
 
 

@@ -1745,14 +1745,6 @@ class GenerarReporteATD(object):
         GDB_PATH = parameters[ix["gdb"]].valueAsText
         _aplicar_region_desde_gdb(GDB_PATH, globals(), force=True)
         FC_ALERTAS = parameters[ix["fc_alertas"]].valueAsText
-        try:
-            from atd_superficie import actualizar_md_sup
-            n_sup = actualizar_md_sup(FC_ALERTAS)
-            arcpy.AddMessage(
-                f"  Superficie (ha) refrescada desde geometria: {n_sup}"
-            )
-        except Exception as ex_sup:
-            arcpy.AddWarning(f"  No se pudo refrescar md_sup: {ex_sup}")
         FC_ANP = parameters[ix["fc_anp"]].valueAsText
         FC_ZONIF = parameters[ix["fc_zonif"]].valueAsText
         FECHA_INI_REPORTE = parameters[ix["fecha_ini"]].valueAsText
@@ -1868,15 +1860,10 @@ class GenerarReporteATD(object):
                 arcpy.AddMessage(f"    GORE -> {os.path.basename(_g)}")
             if os.path.isfile(_gr):
                 arcpy.AddMessage(f"    Gerencia -> {os.path.basename(_gr)}")
-            _faltan = listar_logos_faltantes(
-                DIR_LOGOS, _rk_logos, list(ACR_NOMBRES.keys()))
+            _faltan = listar_logos_faltantes(DIR_LOGOS, _rk_logos, [])
             if _faltan:
-                arcpy.AddWarning(
-                    "  Logos ACR/GORE pendientes: " + ", ".join(_faltan)
-                )
-            else:
                 arcpy.AddMessage(
-                    f"  Logos ACR ({len(ACR_NOMBRES)}): todos resueltos"
+                    "  Logos institucionales: " + ", ".join(_faltan)
                 )
         except Exception:
             pass
@@ -2136,6 +2123,43 @@ class GenerarReporteATD(object):
             return
 
         df_periodo = enriquecer_alertas(df_periodo, modo_ligero=MODO_ESTABLE)
+        try:
+            from atd_superficie import actualizar_md_sup, leer_ha_geodesica
+            oids_ha = (
+                oid_sel if isinstance(oid_sel, list)
+                else ([oid_sel] if isinstance(oid_sel, int) else None)
+            )
+            where_ha = None
+            if oids_ha:
+                oid_nom = arcpy.Describe(FC_ALERTAS).OIDFieldName
+                if len(oids_ha) == 1:
+                    where_ha = f"{oid_nom} = {int(oids_ha[0])}"
+                else:
+                    where_ha = (
+                        f"{oid_nom} IN ({','.join(str(int(x)) for x in oids_ha)})"
+                    )
+            try:
+                actualizar_md_sup(FC_ALERTAS, where_ha)
+            except Exception:
+                pass
+            ha_mem = leer_ha_geodesica(FC_ALERTAS, where_ha)
+            if ha_mem and "objectid" in df_periodo.columns:
+                df_periodo = df_periodo.copy()
+
+                def _ha_row(oid, actual):
+                    try:
+                        return ha_mem.get(int(oid), actual)
+                    except (TypeError, ValueError):
+                        return actual
+
+                df_periodo["md_sup"] = [
+                    _ha_row(o, a)
+                    for o, a in zip(
+                        df_periodo["objectid"], df_periodo["md_sup"]
+                    )
+                ]
+        except Exception:
+            pass
 
         acr_gdf, zi_gdf, zonif_gdf = None, None, None
         if not MODO_ESTABLE:
