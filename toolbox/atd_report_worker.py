@@ -6,6 +6,7 @@ Uso: python atd_report_worker.py <ruta_job.json>
 from __future__ import annotations
 
 import importlib.machinery
+import importlib.util
 import json
 import os
 import sys
@@ -99,10 +100,14 @@ def main(job_path: str) -> int:
 
     try:
         _patch_arcpy_logging()
-        # ArcGIS .pyt no tiene loader en importlib por extension; SourceFileLoader si
-        mod = importlib.machinery.SourceFileLoader(
-            "atd_h3_reporte", h3_path
-        ).load_module()
+        # .pyt no es un modulo normal: hay que registrarlo en sys.modules
+        # ANTES de exec, o load_module() lanza KeyError: 'atd_h3_reporte'.
+        nombre = "atd_h3_reporte"
+        loader = importlib.machinery.SourceFileLoader(nombre, h3_path)
+        spec = importlib.util.spec_from_loader(nombre, loader)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[nombre] = mod
+        loader.exec_module(mod)
 
         ix = mod.GenerarReporteATD._IX
         parameters = _build_parameters(job, ix)

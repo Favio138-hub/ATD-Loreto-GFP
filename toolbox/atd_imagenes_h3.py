@@ -17,7 +17,13 @@ MPC_ITEM_S2 = (
     "https://planetarycomputer.microsoft.com/api/stac/v1/collections/"
     "sentinel-2-l2a/items/{item_id}"
 )
+E84_ITEM_S2 = (
+    "https://earth-search.aws.element84.com/v1/collections/"
+    "sentinel-2-l2a/items/{item_id}"
+)
 MPC_SIGN_API = "https://planetarycomputer.microsoft.com/api/sas/v1/sign"
+MPC_TILER = "https://planetarycomputer.microsoft.com/api/data/v1/item"
+TITILER_COG = "https://titiler.xyz/cog/bbox"
 
 
 def resolver_oid_imagen(alerta_sel: str | None, alerta_row=None) -> int | None:
@@ -93,8 +99,105 @@ def _http_bytes(url: str, max_mb: int = 25) -> bytes:
     return data
 
 
+def _bbox_gis_desde_meta(meta):
+    """Bbox API [xmin, ymin, xmax, ymax] a partir del JSON H2."""
+    if not meta:
+        return None
+    b = meta.get("bbox_wgs84") or meta.get("bbox")
+    if not isinstance(b, (list, tuple)) or len(b) < 4:
+        return None
+    xmin, xmax, ymin, ymax = _normalizar_bounds(b)
+    if xmax <= xmin or ymax <= ymin:
+        return None
+    return [xmin, ymin, xmax, ymax]
+
+
+def _es_png(data: bytes) -> bool:
+    return bool(data) and len(data) >= MIN_PNG_BYTES and data[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def _descargar_png_bbox(item_id: str, bbox_gis, size: int = 800) -> bytes | None:
+    """Recorte de la escena al bbox de la alerta (no thumbnail de toda la tile)."""
+    if not item_id or not bbox_gis or len(bbox_gis) < 4:
+        return None
+    x0, y0, x1, y1 = [float(v) for v in bbox_gis[:4]]
+    bbox_txt = f"{x0:.8f},{y0:.8f},{x1:.8f},{y1:.8f}"
+    qid = urllib.parse.quote(item_id, safe="")
+    urls = []
+    q_mpc = urllib.parse.urlencode({
+        "collection": "sentinel-2-l2a",
+        "item": item_id,
+        "assets": "visual",
+        "format": "png",
+        "resampling": "bilinear",
+    })
+    urls.append(f"{MPC_TILER}/bbox/{bbox_txt}/{int(size)}x{int(size)}.png?{q_mpc}")
+    try:
+        item_url = E84_ITEM_S2.format(item_id=qid)
+        req = urllib.request.Request(item_url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            item = json.loads(resp.read().decode())
+        assets = item.get("assets") or {}
+        href = None
+        for key in ("visual", "visual_tci", "rendered_preview"):
+            if key in assets and isinstance(assets[key], dict):
+                href = assets[key].get("href")
+                if href:
+                    break
+        if href:
+            q_t = urllib.parse.urlencode({"url": href, "resampling": "lanczos"})
+            urls.append(f"{TITILER_COG}/{bbox_txt}/{int(size)}x{int(size)}.png?{q_t}")
+    except Exception:
+        pass
+    for url in urls:
+        try:
+            signed = _sign_mpc_href(url) if "planetarycomputer" in url else url
+            data = _http_bytes(signed)
+            if _es_png(data):
+                return data
+        except Exception:
+            continue
+    return None
+
+
+def _recortar_preview_a_bbox(png_bytes: bytes, scene_bbox, alert_bbox, out_size=800):
+    """Si el PNG es la tile completa, recorta al bbox de la alerta."""
+    try:
+        from PIL import Image
+        import io
+    except ImportError:
+        return png_bytes
+    if not scene_bbox or not alert_bbox or len(scene_bbox) < 4 or len(alert_bbox) < 4:
+        return png_bytes
+    ex0, ey0, ex1, ey1 = [float(v) for v in scene_bbox[:4]]
+    ax0, ay0, ax1, ay1 = [float(v) for v in alert_bbox[:4]]
+    if abs(ex1 - ex0) <= abs(ax1 - ax0) * 2:
+        return png_bytes
+    try:
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        w, h = img.size
+        px0 = int((ax0 - ex0) / (ex1 - ex0) * w)
+        px1 = int((ax1 - ex0) / (ex1 - ex0) * w)
+        py0 = int((ey1 - ay1) / (ey1 - ey0) * h)
+        py1 = int((ey1 - ay0) / (ey1 - ey0) * h)
+        px0 = max(0, min(px0, w - 1))
+        px1 = max(px0 + 2, min(px1, w))
+        py0 = max(0, min(py0, h - 1))
+        py1 = max(py0 + 2, min(py1, h))
+        if (px1 - px0) < 8 or (py1 - py0) < 8:
+            return png_bytes
+        cropped = img.crop((px0, py0, px1, py1))
+        rs = getattr(Image, "LANCZOS", getattr(Image, "BICUBIC", Image.BILINEAR))
+        cropped = cropped.resize((int(out_size), int(out_size)), rs)
+        buf = io.BytesIO()
+        cropped.save(buf, format="PNG", optimize=True)
+        return buf.getvalue()
+    except Exception:
+        return png_bytes
+
+
 def regenerar_png_desde_json(json_path: str, dir_img: str | None = None) -> str | None:
-    """Si hay .json pero falta .png, intenta bajar preview MPC por id de escena."""
+    """Si hay .json pero falta .png, baja el recorte del bbox de la alerta."""
     if not os.path.isfile(json_path):
         return None
     dir_img = dir_img or os.path.dirname(json_path)
@@ -118,28 +221,42 @@ def regenerar_png_desde_json(json_path: str, dir_img: str | None = None) -> str 
     item_id = str(meta.get("id") or "").strip()
     if not item_id or item_id == "-":
         return None
-    try:
-        item_url = MPC_ITEM_S2.format(item_id=urllib.parse.quote(item_id, safe=""))
-        req = urllib.request.Request(item_url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            item = json.loads(resp.read().decode())
-        assets = item.get("assets") or {}
-        href = None
-        for key in ("rendered_preview", "visual", "visual_tci", "thumbnail"):
-            if key in assets and isinstance(assets[key], dict):
-                href = assets[key].get("href")
-                if href:
-                    break
-        if not href:
-            return None
-        data = _http_bytes(_sign_mpc_href(href))
-        if len(data) < MIN_PNG_BYTES:
-            return None
-        with open(out_png, "wb") as fp:
-            fp.write(data)
-        return out_png
-    except Exception:
+    bbox_gis = _bbox_gis_desde_meta(meta)
+    data = _descargar_png_bbox(item_id, bbox_gis, size=800) if bbox_gis else None
+    if not _es_png(data or b""):
+        data = None
+        for item_url in (
+            E84_ITEM_S2.format(item_id=urllib.parse.quote(item_id, safe="")),
+            MPC_ITEM_S2.format(item_id=urllib.parse.quote(item_id, safe="")),
+        ):
+            try:
+                req = urllib.request.Request(item_url, headers={"User-Agent": UA})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    item = json.loads(resp.read().decode())
+                assets = item.get("assets") or {}
+                href = None
+                for key in ("rendered_preview", "visual", "visual_tci", "thumbnail"):
+                    if key in assets and isinstance(assets[key], dict):
+                        href = assets[key].get("href")
+                        if href:
+                            break
+                if not href:
+                    continue
+                preview = _http_bytes(_sign_mpc_href(href))
+                if not _es_png(preview):
+                    continue
+                scene_bb = item.get("bbox")
+                if bbox_gis and scene_bb:
+                    preview = _recortar_preview_a_bbox(preview, scene_bb, bbox_gis)
+                data = preview
+                break
+            except Exception:
+                continue
+    if not _es_png(data or b""):
         return None
+    with open(out_png, "wb") as fp:
+        fp.write(data)
+    return out_png
 
 
 def buscar_imagen_local(
@@ -221,8 +338,46 @@ def guardar_imagen_h3(dir_img: str, oid: int, sufijo: str, img_bytes: bytes, met
     return True
 
 
+def _normalizar_bounds(bounds):
+    """
+    Devuelve (xmin, xmax, ymin, ymax).
+    Acepta bbox GIS (xmin, ymin, xmax, ymax) — el de H2/STAC —
+    o el formato interno (xmin, xmax, ymin, ymax).
+    """
+    if bounds is None or len(bounds) < 4:
+        return bounds
+    v = [float(x) for x in bounds[:4]]
+    d02 = abs(v[0] - v[2])
+    d01 = abs(v[0] - v[1])
+    d13 = abs(v[1] - v[3])
+    d12 = abs(v[1] - v[2])
+    if d02 < d01 and d13 < d12:
+        return (v[0], v[2], v[1], v[3])
+    return (v[0], v[1], v[2], v[3])
+
+
+def _epsg_geom_auto(geom, epsg_hint=4326):
+    """Si las coordenadas no son lon/lat, asume UTM (hint o 32718)."""
+    try:
+        crs = getattr(geom, "crs", None)
+        if crs is not None:
+            code = crs.to_epsg() if hasattr(crs, "to_epsg") else None
+            if code:
+                return int(code)
+    except Exception:
+        pass
+    try:
+        c = geom.centroid
+        if abs(float(c.x)) > 180.0 or abs(float(c.y)) > 90.0:
+            return int(epsg_hint) if int(epsg_hint) not in (4326, 0) else 32718
+    except Exception:
+        pass
+    return 4326
+
+
 def _ring_a_pixeles(coords, bounds, w, h):
     """Convierte anillo (x,y) en CRS de bounds a pixeles de imagen."""
+    bounds = _normalizar_bounds(bounds)
     xmin, xmax, ymin, ymax = bounds
     if xmax <= xmin or ymax <= ymin:
         return []
@@ -279,14 +434,14 @@ def _dibujar_vector_en_draw(draw, geom, bounds, w, h, estilo="circulo_limpio"):
         return
 
     polys = _poligonos_shapely(geom)
+    # En el PDF la imagen se achica: 4 px se ve como 1. Grosor ~1% del lado.
+    grosor = max(12, min(28, int(round(min(w, h) * 0.010))))
     for poly in polys:
         ext = _ring_a_pixeles(poly.exterior.coords, bounds, w, h)
         if len(ext) < 3:
             continue
         closed = ext + [ext[0]]
-        draw.polygon(ext, fill=(227, 30, 58, 95))
-        draw.line(closed, fill=(255, 255, 255, 255), width=7)
-        draw.line(closed, fill=(196, 30, 58, 255), width=4)
+        draw.line(closed, fill=(196, 30, 58, 255), width=grosor)
 
 
 def quemar_vector_alerta_en_imagen(
@@ -300,7 +455,7 @@ def quemar_vector_alerta_en_imagen(
     """
     Dibuja la alerta en rojo sobre imagen RGB (numpy o PIL).
     estilo: 'circulo_limpio' (informe PDF), 'circulo' o 'poligono'.
-    bounds: (xmin, xmax, ymin, ymax) en epsg_bounds.
+    bounds: GIS o interno; se normaliza a (xmin, xmax, ymin, ymax).
     """
     try:
         from PIL import Image, ImageDraw
@@ -308,46 +463,41 @@ def quemar_vector_alerta_en_imagen(
     except ImportError:
         return img_rgb
 
-    if img_rgb is None or geom is None:
+    if img_rgb is None or geom is None or bounds is None:
         return img_rgb
 
-    if hasattr(img_rgb, "size"):
-        pil = img_rgb.convert("RGBA")
-    else:
-        pil = Image.fromarray(img_rgb).convert("RGBA")
-
-    g = geom
-    if epsg_geom != epsg_bounds:
-        try:
-            import pyproj
-            from shapely.ops import transform as shp_transform
-
-            tr = pyproj.Transformer.from_crs(
-                epsg_geom, epsg_bounds, always_xy=True)
-            g = shp_transform(tr.transform, geom)
-        except Exception:
-            return img_rgb
+    as_pil = hasattr(img_rgb, "convert")
+    pil = img_rgb.convert("RGBA") if as_pil else Image.fromarray(img_rgb).convert("RGBA")
+    epsg_g = _epsg_geom_auto(geom, epsg_geom)
+    g = _transformar_geom(geom, epsg_g, epsg_bounds)
+    bnds = _normalizar_bounds(bounds)
 
     draw = ImageDraw.Draw(pil, "RGBA")
     w, h = pil.size
-    _dibujar_vector_en_draw(draw, g, bounds, w, h, estilo=estilo or "circulo_limpio")
+    _dibujar_vector_en_draw(draw, g, bnds, w, h, estilo=estilo or "poligono")
 
     out = pil.convert("RGB")
-    if hasattr(img_rgb, "size"):
-        return out
-    return np.array(out)
+    return out if as_pil else np.array(out)
 
 
-def bounds_imagen_desde_meta(meta, geom_wgs, epsg_utm=32718, buffer_m=320):
+def geom_a_wgs84(geom, epsg_hint=32718):
+    """Pasa la geometria de la alerta a EPSG:4326 (detecta UTM si |x|>180)."""
+    if geom is None:
+        return None
+    return _transformar_geom(geom, _epsg_geom_auto(geom, epsg_hint), 4326)
+
+
+def bounds_imagen_desde_meta(meta, geom_wgs, epsg_utm=32718, buffer_m=500):
     """Extent de imagen: meta.bbox_wgs84 o buffer alrededor de la alerta."""
     if meta:
         b = meta.get("bbox_wgs84") or meta.get("bbox")
         if isinstance(b, (list, tuple)) and len(b) == 4:
-            return tuple(float(x) for x in b), 4326
+            return _normalizar_bounds(b), 4326
+    geom4326 = geom_a_wgs84(geom_wgs, epsg_utm)
     try:
         import geopandas as gpd
 
-        gdf = gpd.GeoDataFrame(geometry=[geom_wgs], crs="EPSG:4326").to_crs(
+        gdf = gpd.GeoDataFrame(geometry=[geom4326], crs="EPSG:4326").to_crs(
             f"EPSG:{epsg_utm}")
         gdf["geometry"] = gdf.geometry.buffer(buffer_m)
         xmin, ymin, xmax, ymax = gdf.total_bounds
@@ -355,7 +505,7 @@ def bounds_imagen_desde_meta(meta, geom_wgs, epsg_utm=32718, buffer_m=320):
     except Exception:
         pass
     try:
-        xmin, ymin, xmax, ymax = geom_wgs.bounds
+        xmin, ymin, xmax, ymax = geom4326.bounds
         pad = 0.0012
         return (xmin - pad, xmax + pad, ymin - pad, ymax + pad), 4326
     except Exception:
@@ -387,10 +537,13 @@ def _bbox_pixeles_geom(geom, bounds, w, h):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def recortar_zoom_alerta(pil, bounds, geom, margen_factor=3.3, min_lado_px=160):
-    """Recorta la imagen para que el poligono de alerta quede grande y centrado."""
+def recortar_zoom_alerta(pil, bounds, geom, margen_factor=8.0, min_lado_px=160):
+    """
+    Zoom suave centrado en el centroide del poligono, con contexto alrededor.
+    """
     if pil is None or bounds is None or geom is None:
         return pil, bounds
+    bounds = _normalizar_bounds(bounds)
     w, h = pil.size
     if w < 40 or h < 40:
         return pil, bounds
@@ -398,19 +551,25 @@ def recortar_zoom_alerta(pil, bounds, geom, margen_factor=3.3, min_lado_px=160):
     if not box:
         return pil, bounds
     x0, y0, x1, y1 = box
+    if x1 < 0 or y1 < 0 or x0 > w or y0 > h:
+        return pil, bounds
     bw = max(x1 - x0, 6)
     bh = max(y1 - y0, 6)
-    frac = max(bw / w, bh / h)
-    if frac >= 0.32:
-        factor = 2.15
-    else:
-        factor = margen_factor
-    lado = max(bw, bh) * factor
-    lado = max(lado, min_lado_px)
-    if lado >= 0.95 * min(w, h):
-        return pil, bounds
-    cx = (x0 + x1) / 2.0
-    cy = (y0 + y1) / 2.0
+    try:
+        c = geom.centroid
+        xmin, xmax, ymin, ymax = bounds
+        cx = (float(c.x) - xmin) / (xmax - xmin) * w
+        cy = (ymax - float(c.y)) / (ymax - ymin) * h
+    except Exception:
+        cx = (x0 + x1) / 2.0
+        cy = (y0 + y1) / 2.0
+    if cx < -8 or cy < -8 or cx > w + 8 or cy > h + 8:
+        cx = min(max((x0 + x1) / 2.0, 0.0), float(w))
+        cy = min(max((y0 + y1) / 2.0, 0.0), float(h))
+    lado = max(max(bw, bh) * margen_factor, 0.62 * min(w, h), float(min_lado_px))
+    need = max(abs(x0 - cx), abs(x1 - cx), abs(y0 - cy), abs(y1 - cy)) + 12
+    lado = max(lado, need * 2.0)
+    lado = min(lado, 0.92 * min(w, h))
     half = lado / 2.0
     cx0 = int(round(cx - half))
     cy0 = int(round(cy - half))
@@ -460,11 +619,12 @@ def aplicar_vector_y_zoom(
 
     as_pil = hasattr(img_rgb, "convert")
     pil = img_rgb.convert("RGBA") if as_pil else Image.fromarray(img_rgb).convert("RGBA")
-    g = _transformar_geom(geom, epsg_geom, epsg_bounds)
-    bnds = bounds
+    epsg_g = _epsg_geom_auto(geom, epsg_geom)
+    bnds = _normalizar_bounds(bounds)
+    g = _transformar_geom(geom, epsg_g, epsg_bounds)
     if zoom:
         pil_rgb = pil.convert("RGB")
-        pil_rgb, bnds = recortar_zoom_alerta(pil_rgb, bounds, g)
+        pil_rgb, bnds = recortar_zoom_alerta(pil_rgb, bnds, g)
         pil = pil_rgb.convert("RGBA")
 
     draw = ImageDraw.Draw(pil, "RGBA")
@@ -492,7 +652,8 @@ def marcar_png_con_alerta(
         arr = np.array(Image.open(ruta_png).convert("RGB"))
         arr_m = aplicar_vector_y_zoom(
             arr, bounds, geom_wgs,
-            epsg_bounds=epsg_b, epsg_geom=4326,
+            epsg_bounds=epsg_b,
+            epsg_geom=_epsg_geom_auto(geom_wgs, epsg_utm),
             estilo=estilo or "poligono", zoom=True)
         base, ext = os.path.splitext(ruta_png)
         ruta_out = f"{base}_vec{ext}"

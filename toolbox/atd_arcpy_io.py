@@ -28,7 +28,7 @@ DOMINIO_CAUSA = {
     14: "Natural", 15: "Incendio Antropico",
     16: "Falsa Alerta", 99: "Sin Clasificar",
 }
-CAUSAS_NO_ANTROPICAS = {14, 16}
+CAUSAS_NO_ANTROPICAS = {16}  # solo falsa alerta; Natural (14) entra al reporte
 _CAUSA_TEXTO_A_INT = {
     v.lower().strip(): k for k, v in DOMINIO_CAUSA.items()
 }
@@ -257,7 +257,7 @@ def _leer_alertas_una_fc(
         if rec["_causa_int"] in CAUSAS_NO_ANTROPICAS:
             fn(
                 f"  AVISO [{fc_alertas}]: OID {rec.get('objectid')} omitido — "
-                f"causa no antropica ({rec.get('md_causa')!r})"
+                f"falsa alerta ({rec.get('md_causa')!r})"
             )
             return None
         if rec["_causa_int"] is None:

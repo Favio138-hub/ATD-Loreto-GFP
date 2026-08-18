@@ -52,6 +52,8 @@ _ACR_LOGO_ALIASES = {
     "ACR09": ["logo_anp_ACR09"],
     "ACR10": ["logo_anp_ACR10"],
     "ACR17": ["logo_anp_ACR17"],
+    "ACR34": ["logo_anp_ACR34", "logo_anp_ACR18"],
+    "ACR37": ["logo_anp_ACR37", "logo_anp_ACM"],
     "ACR07": ["ACR_Choquequirao.png", "ACR_Choquequirao"],
     "ACR26": [
         "Logo Chuyapi Urusayhua_Mesa de trabajo 1.png",
