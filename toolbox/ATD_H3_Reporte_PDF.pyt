@@ -68,6 +68,8 @@ from atd_arcpy_io import (
     filtrar_registros_seleccion,
     listar_opciones_alertas_arcpy,
     parse_seleccion_alerta,
+    texto_actividad,
+    texto_efecto,
 )
 try:
     import atd_imagenes_h3 as _img_h3
@@ -151,7 +153,7 @@ DOMINIO_CAUSA = {
     10: "Transporte / Infraestructura", 11: "Ocupacion Humana",
     12: "Restos Arqueologicos", 13: "Otros",
     14: "Natural", 15: "Incendio Antropico",
-    16: "Falsa Alerta", 99: "Sin Clasificar",
+    16: "Falsa Alerta", 99: "Otros",
 }
 CAUSAS_NO_ANTROPICAS = {16}  # solo falsa alerta; Natural (14) SI entra al reporte
 DOMINIO_CONF = {
@@ -661,7 +663,7 @@ def _aplicar_filtros_acr_periodo(alertas_gdf, fecha_ini, fecha_fin, msg_fn=None)
     sin_causa = df_antrop["_causa_int"].isna()
     if sin_causa.any():
         df_antrop.loc[sin_causa, "_causa_int"] = 99
-        df_antrop.loc[sin_causa, "causa_texto"] = "Sin clasificar (sin md_causa en GDB)"
+        df_antrop.loc[sin_causa, "causa_texto"] = "Otros"
         fn(f"  AVISO: {int(sin_causa.sum())} alerta(s) sin md_causa — incluidas como pendientes")
     fn(f"  Reportables (antropico + natural, sin falsa alerta): {len(df_antrop):,}")
 
@@ -768,9 +770,12 @@ def enriquecer_alertas(df_periodo, modo_ligero=False):
         df["anp_codi"] = df["_anp_norm"].astype(str).str.strip()
     else:
         df["anp_codi"] = df["anp_codi"].apply(normalizar_anp_codi).astype(str).str.strip()
-    df["causa_texto"] = df["_causa_int"].apply(
-        lambda v: DOMINIO_CAUSA.get(int(v), f"Codigo {v}")
-        if pd.notna(v) else "Sin clasificar"
+    df["causa_texto"] = df.apply(
+        lambda r: texto_actividad(
+            DOMINIO_CAUSA.get(int(r["_causa_int"])) if pd.notna(r["_causa_int"]) else None,
+            r["_causa_int"],
+        ),
+        axis=1,
     )
     df["conf_texto"] = df["md_conf"].apply(
         lambda v: _etiqueta_confianza(v) if pd.notna(v) else "Sin clasificar"
@@ -2496,9 +2501,11 @@ class GenerarReporteATD(object):
                        arrowprops=dict(arrowstyle="->", color="white", lw=1.8), zorder=12)
 
             sup   = alerta_row.get("md_sup", 0) or 0
-            causa = alerta_row.get("causa_texto", "-")
+            causa = texto_actividad(
+                alerta_row.get("causa_texto"), alerta_row.get("_causa_int")
+            )
             ax.set_title(
-                f"{nombre}\nAlerta #{idx_alerta+1}/{total_alertas} — {causa} | {sup:.4f} ha",
+                f"{nombre}\nAlerta #{idx_alerta+1}/{total_alertas} — {causa} | {sup:.2f} ha",
                 fontsize=6, fontweight="bold", color="white", pad=3,
                 path_effects=[pe.withStroke(linewidth=1.2, foreground="black")]
             )
@@ -2687,7 +2694,10 @@ class GenerarReporteATD(object):
             cod_acr     = str(alerta_row.get("anp_codi", "SIN")).strip()
             sigla       = alerta_row.get("acr_sigla",  cod_acr)
             nombre_acr  = alerta_row.get("acr_nombre", cod_acr)
-            causa       = alerta_row.get("causa_texto",  "Sin clasificar")
+            causa       = texto_actividad(
+                alerta_row.get("causa_texto"), alerta_row.get("_causa_int")
+            )
+            efecto      = texto_efecto(alerta_row.get("efecto_texto"))
             bosque      = alerta_row.get("bosque_texto", "-")
             confianza   = alerta_row.get("conf_texto",   "-")
             zonif       = str(alerta_row.get("md_zonif",  "") or "-")
@@ -3100,8 +3110,8 @@ class GenerarReporteATD(object):
             ], WA, WB)
 
             t_s4 = tabla_sec("4", "Datos de Afectación", [
-                ("Causa:", causa),
-                ("Efecto:", "Pérdida de Hábitat"),
+                ("Actividad:", causa),
+                ("Efecto:", efecto),
                 ("Tipo de Bosque:", bosque),
                 ("Superficie Afectada (ha):", f"{superficie:.2f}"),
                 ("Código de Grilla:", grilla),

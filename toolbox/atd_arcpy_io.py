@@ -26,12 +26,15 @@ DOMINIO_CAUSA = {
     10: "Transporte / Infraestructura", 11: "Ocupacion Humana",
     12: "Restos Arqueologicos", 13: "Otros",
     14: "Natural", 15: "Incendio Antropico",
-    16: "Falsa Alerta", 99: "Sin Clasificar",
+    16: "Falsa Alerta", 99: "Otros",
 }
 CAUSAS_NO_ANTROPICAS = {16}  # solo falsa alerta; Natural (14) entra al reporte
-_CAUSA_TEXTO_A_INT = {
-    v.lower().strip(): k for k, v in DOMINIO_CAUSA.items()
-}
+_CAUSA_TEXTO_A_INT = {}
+for _cod, _lab in DOMINIO_CAUSA.items():
+    _CAUSA_TEXTO_A_INT.setdefault(_lab.lower().strip(), _cod)
+_CAUSA_TEXTO_A_INT["sin clasificar"] = 99
+TEXTO_OTROS = "Otros"
+EFECTO_DEFAULT = "Pérdida de Hábitat"
 DOMINIO_BOSQUE = {
     1: "Primario", 2: "Secundario", 3: "Sin Bosque",
     4: "Aguajal", 5: "Varillal", 6: "No determinado",
@@ -45,6 +48,37 @@ def _etiqueta_confianza(valor):
         return dom.get(int(valor), "Sin clasificar")
     except Exception:
         return "Sin clasificar"
+
+
+def _es_sin_clasificar(texto):
+    t = str(texto or "").strip()
+    if not t or t in ("-", "??", "?", "None"):
+        return True
+    low = t.lower()
+    return low.startswith("sin clasificar") or low.startswith("codigo ")
+
+
+def texto_actividad(texto=None, causa_int=None):
+    """Etiqueta Actividad del reporte: nunca vacio ni 'sin clasificar'."""
+    if not _es_sin_clasificar(texto):
+        return str(texto).strip()
+    if causa_int is not None:
+        try:
+            ci = int(causa_int)
+        except (TypeError, ValueError):
+            ci = None
+        if ci is not None:
+            lab = DOMINIO_CAUSA.get(ci)
+            if lab and not _es_sin_clasificar(lab):
+                return lab
+    return TEXTO_OTROS
+
+
+def texto_efecto(texto=None):
+    """Efecto del reporte: siempre con valor (otros = perdida de habitat)."""
+    if _es_sin_clasificar(texto):
+        return EFECTO_DEFAULT
+    return str(texto).strip()
 
 
 def _parse_fecha(val):
@@ -151,9 +185,9 @@ def _enriquecer_registro(rec):
     rec["anp_codi"] = cod
     causa_int = _parse_causa_int(rec)
     rec["_causa_int"] = causa_int
-    rec["causa_texto"] = (
-        DOMINIO_CAUSA.get(causa_int, f"Codigo {causa_int}")
-        if causa_int is not None else "Sin clasificar"
+    rec["causa_texto"] = texto_actividad(
+        DOMINIO_CAUSA.get(causa_int) if causa_int is not None else None,
+        causa_int,
     )
     rec["conf_texto"] = (
         _etiqueta_confianza(rec["md_conf"])
@@ -267,7 +301,7 @@ def _leer_alertas_una_fc(
                 sup = 0.0
             if sup > 0:
                 rec["_causa_int"] = 99
-                rec["causa_texto"] = "Sin clasificar (sin md_causa en GDB)"
+                rec["causa_texto"] = TEXTO_OTROS
                 fn(
                     f"  AVISO [{fc_alertas}]: OID {rec.get('objectid')} sin md_causa — "
                     f"incluida como pendiente ({sup:.4f} ha)"

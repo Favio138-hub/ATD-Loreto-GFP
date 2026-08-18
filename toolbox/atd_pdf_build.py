@@ -170,7 +170,9 @@ def generar_pdf_atd(job):
     cod_acr = str(a.get("anp_codi", "SIN")).strip()
     sigla = a.get("acr_sigla", cod_acr)
     nombre_acr = a.get("acr_nombre", cod_acr)
-    causa = a.get("causa_texto", "Sin clasificar")
+    from atd_arcpy_io import texto_actividad, texto_efecto
+    causa = texto_actividad(a.get("causa_texto"), a.get("_causa_int"))
+    efecto = texto_efecto(a.get("efecto_texto"))
     bosque = a.get("bosque_texto", "-")
     confianza = a.get("conf_texto", "-")
     zonif = str(a.get("md_zonif", "") or "-")
@@ -380,8 +382,8 @@ def generar_pdf_atd(job):
         ("Coordenada Norte (m):", f"{float(norte):,.1f}" if norte else "-"),
     ], WA, WB)
     t_s4 = tabla_sec("4", "Datos de Afectacion", [
-        ("Causa:", causa),
-        ("Efecto:", "Perdida de Habitat"),
+        ("Actividad:", causa),
+        ("Efecto:", efecto),
         ("Tipo de Bosque:", bosque),
         ("Superficie Afectada (ha):", f"{superficie:.2f}"),
         ("Codigo de Grilla:", grilla),
