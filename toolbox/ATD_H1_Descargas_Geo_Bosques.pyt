@@ -30,6 +30,7 @@ from datetime import datetime as dt, date, timedelta
 _toolbox_dir = os.path.dirname(os.path.abspath(__file__))
 if _toolbox_dir not in sys.path:
     sys.path.insert(0, _toolbox_dir)
+from atd_superficie import redondear_ha
 from atd_region_config import (
     configurar_region,
     sincronizar_imports_region,
@@ -2100,7 +2101,7 @@ class InsertarAlertas(object):
                                 fila[i_anno] = int(anno)
                             if i_sup >= 0:
                                 fila[i_sup] = (
-                                    round(float(area_ha), 6)
+                                    redondear_ha(area_ha)
                                     if area_ha else None)
                             if i_este >= 0:
                                 fila[i_este] = este

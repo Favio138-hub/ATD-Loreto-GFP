@@ -4860,76 +4860,11 @@ def _run_visor_satelital(
 
 # ─── HERRAMIENTA ARCGIS PRO ───────────────────────────────────────────────────
 
-class ActualizarSuperficie(object):
-    """Tras recortar el poligono en el mapa: refresca Superficie (ha)."""
-
-    def __init__(self):
-        self.label = "Actualizar Superficie (ha) tras editar poligono"
-        self.description = (
-            "Recalcula md_sup en hectareas geodesicas segun la geometria "
-            "actual. Usar despues de recortar/editar la alerta (entre H2 y H3). "
-            "Si hay seleccion, solo esas filas."
-        )
-        self.canRunInBackground = False
-
-    def getParameterInfo(self):
-        p0 = arcpy.Parameter(
-            displayName="* GDB Linea Base Deforestacion",
-            name="gdb_trabajo",
-            datatype="DEWorkspace",
-            parameterType="Required",
-            direction="Input",
-        )
-        p0.filter.list = ["Local Database"]
-        p1 = arcpy.Parameter(
-            displayName="* FC de alertas",
-            name="fc_alertas",
-            datatype="GPFeatureLayer",
-            parameterType="Required",
-            direction="Input",
-        )
-        p1.value = "MonitoreoDeforestacion"
-        return [p0, p1]
-
-    def isLicensed(self):
-        return True
-
-    def updateParameters(self, p):
-        gdb_abs = gdb_absoluta_si_existe(p[0].valueAsText)
-        if gdb_abs:
-            configurar_region(gdb_abs)
-        return
-
-    def updateMessages(self, p):
-        return
-
-    def execute(self, parameters, messages):
-        fc = parameters[1].valueAsText
-        from atd_superficie import actualizar_md_sup, asegurar_regla_superficie
-        try:
-            n = actualizar_md_sup(fc)
-            arcpy.AddMessage(
-                f"Superficie actualizada en {n} poligono(s) (ha geodesic)."
-            )
-            if n == 0:
-                arcpy.AddWarning(
-                    "0 filas. Si hay seleccion vacia, quite la seleccion "
-                    "o seleccione las alertas recortadas."
-                )
-            cat = arcpy.Describe(fc).catalogPath
-            arcpy.AddMessage(
-                "Regla automatica md_sup: " + asegurar_regla_superficie(cat)
-            )
-        except Exception as ex:
-            arcpy.AddError(str(ex))
-            arcpy.AddError(traceback.format_exc())
-
-
 class VisualizarSatelital(object):
 
     def __init__(self):
         self.label = (
-            "Visor de imágenes satelitales para fotointerpretación "
+            "1. Visor de imágenes satelitales para fotointerpretación "
             "de las causas de deforestación"
         )
         self.description = (
@@ -5171,3 +5106,68 @@ def _aplicar_ids_tabla(fc_path, oid_target, esc_a, esc_d, sr_wkt):
     except Exception as e:
         arcpy.AddError(f"Error tabla: {e}")
         arcpy.AddError(traceback.format_exc())
+
+
+class ActualizarSuperficie(object):
+    """Tras recortar el poligono en el mapa: refresca Superficie (ha)."""
+
+    def __init__(self):
+        self.label = "2. Actualizar Superficie (ha) tras editar poligono"
+        self.description = (
+            "Recalcula md_sup en hectareas geodesicas segun la geometria "
+            "actual. Usar despues de recortar/editar la alerta (entre H2 y H3). "
+            "Si hay seleccion, solo esas filas."
+        )
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        p0 = arcpy.Parameter(
+            displayName="* GDB Linea Base Deforestacion",
+            name="gdb_trabajo",
+            datatype="DEWorkspace",
+            parameterType="Required",
+            direction="Input",
+        )
+        p0.filter.list = ["Local Database"]
+        p1 = arcpy.Parameter(
+            displayName="* FC de alertas",
+            name="fc_alertas",
+            datatype="GPFeatureLayer",
+            parameterType="Required",
+            direction="Input",
+        )
+        p1.value = "MonitoreoDeforestacion"
+        return [p0, p1]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, p):
+        gdb_abs = gdb_absoluta_si_existe(p[0].valueAsText)
+        if gdb_abs:
+            configurar_region(gdb_abs)
+        return
+
+    def updateMessages(self, p):
+        return
+
+    def execute(self, parameters, messages):
+        fc = parameters[1].valueAsText
+        from atd_superficie import actualizar_md_sup, asegurar_regla_superficie
+        try:
+            n = actualizar_md_sup(fc)
+            arcpy.AddMessage(
+                f"Superficie actualizada en {n} poligono(s) (ha geodesic)."
+            )
+            if n == 0:
+                arcpy.AddWarning(
+                    "0 filas. Si hay seleccion vacia, quite la seleccion "
+                    "o seleccione las alertas recortadas."
+                )
+            cat = arcpy.Describe(fc).catalogPath
+            arcpy.AddMessage(
+                "Regla automatica md_sup: " + asegurar_regla_superficie(cat)
+            )
+        except Exception as ex:
+            arcpy.AddError(str(ex))
+            arcpy.AddError(traceback.format_exc())

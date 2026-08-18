@@ -2,14 +2,25 @@
 """Recalcula md_sup (ha geodesic) al editar el poligono. Usado por H2/H3."""
 from __future__ import annotations
 
+import math
+
+DECIMALES_HA = 2
 REGLA_NOMBRE = "ATD_md_sup_geodesica"
 ARCADE_SUP = """
 var ha = AreaGeodetic($feature, 'hectares');
 if (ha == null || ha <= 0) {
     ha = Area($feature, 'hectares');
 }
-return Round(ha, 6);
+return Floor(ha * 100 + 0.0000001) / 100;
 """
+
+
+def redondear_ha(ha):
+    """Dos cifras: 2.205495 -> 2.20 ; 1.71544 -> 1.71."""
+    if ha is None:
+        return None
+    x = float(ha)
+    return math.trunc(x * (10 ** DECIMALES_HA) + 1e-12) / (10 ** DECIMALES_HA)
 
 
 def _campos(fc):
@@ -47,7 +58,7 @@ def actualizar_md_sup(fc, where=None) -> int:
                     ha = geom.getArea("PLANAR", "HECTARES")
                 except Exception:
                     continue
-            row[2] = round(float(ha or 0), 6)
+            row[2] = redondear_ha(ha or 0)
             try:
                 cent = geom.centroid
                 if i_este is not None:
@@ -58,6 +69,27 @@ def actualizar_md_sup(fc, where=None) -> int:
                 pass
             cur.updateRow(row)
             n += 1
+    return n
+
+
+def recortar_md_sup_existente(fc, where=None) -> int:
+    """Deja md_sup con 2 cifras (2.205495 -> 2.20) sin recalcular geometria."""
+    import arcpy
+    if not fc or not arcpy.Exists(fc):
+        return 0
+    campos = _campos(fc)
+    if "md_sup" not in campos:
+        return 0
+    n = 0
+    with arcpy.da.UpdateCursor(fc, [campos["md_sup"]], where) as cur:
+        for row in cur:
+            if row[0] is None:
+                continue
+            nuevo = redondear_ha(row[0])
+            if nuevo != row[0]:
+                row[0] = nuevo
+                cur.updateRow(row)
+                n += 1
     return n
 
 
@@ -77,7 +109,11 @@ def asegurar_regla_superficie(fc) -> str:
     except Exception:
         existentes = []
     if REGLA_NOMBRE in existentes:
-        return "ya existia"
+        try:
+            arcpy.management.DeleteAttributeRule(fc, [REGLA_NOMBRE])
+            existentes = [n for n in existentes if n != REGLA_NOMBRE]
+        except Exception:
+            return "ya existia"
     try:
         tiene_gid = any(f.type == "GlobalID" for f in arcpy.ListFields(fc))
         if not tiene_gid:
