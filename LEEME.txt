@@ -18,14 +18,17 @@ ESTRUCTURA
 GDB PRINCIPAL
 -------------
   GDB/Linea_base_deforestación_Loreto.gdb
-  FC alertas: MonitoreoDeforestacionAcumulado
+  FC alertas: MonitoreoDeforestacion
+  FC historico: MonitoreoDeforestacionAcumulado
 
 ACRs EN ESTE PAQUETE
 --------------------
-  - ACR09: ACR Ampiyacu Apayacu
   - ACR04: ACR Comunal Tamshiyacu Tahuayo
-  - ACR17: ACR Maijuna Kichwa
+  - ACR09: ACR Ampiyacu Apayacu
   - ACR10: ACR Alto Nanay Pintuyacu Chambira
+  - ACR17: ACR Maijuna Kichwa
+  - ACR34: ACR Medio Putumayo Algodón
+  - ACR37: ACR Aguas Calientes Maquía
 
 INICIO RAPIDO
 -------------
@@ -36,7 +39,8 @@ INICIO RAPIDO
 NOTAS
 -----
   * Incluye GDB de gestion (GestionACR) para Lugar poblado y OLV en el PDF.
-  * Historico 2001-2025 en MonitoreoDeforestacionAcumulado; alertas 2026 en MonitoreoDeforestacion.
+  * Descarga Geobosques (H1) inserta en MonitoreoDeforestacion (vigente).
+  * Historico 2001-2025 en MonitoreoDeforestacionAcumulado.
   * Campo zona_influencia (Zona de Influencia) en ambas capas.
 
 Si ArcGIS Pro se cierra: guia/ATD_SI_SE_CIERRA_PRO.md

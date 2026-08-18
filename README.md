@@ -39,10 +39,12 @@ Paquete **autocontenido y listo para ArcGIS Pro** que implementa el flujo instit
 
 | Código | Área de Conservación Regional |
 |--------|------------------------------|
-| ACR09 | Ampiyacu Apayacu |
 | ACR04 | Comunal Tamshiyacu Tahuayo |
-| ACR17 | Maijuna Kichwa |
+| ACR09 | Ampiyacu Apayacu |
 | ACR10 | Alto Nanay Pintuyacu Chambira |
+| ACR17 | Maijuna Kichwa |
+| ACR34 | Medio Putumayo Algodón |
+| ACR37 | Aguas Calientes Maquía |
 
 ---
 
