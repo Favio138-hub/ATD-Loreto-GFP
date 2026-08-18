@@ -96,21 +96,22 @@ flowchart LR
 Flujo real de campo y capacitación (≈ 30–45 min por alerta):
 
 1. **H1 — Descarga Geobosques**  
-   Conecta a la plataforma Geobosques, descarga alertas del periodo vigente e inserta en `MonitoreoDeforestacion`. Verifica en la tabla de atributos: `anp_codi`, `md_exa`, `zona_influencia`, superficie.
+   Solo el **periodo nuevo** (no enero–agosto si ya está fotointerpretado). Destino: `MonitoreoDeforestacion`. ACR: **ACR34** (MPA), no ACR18. El check de crudos va **apagado**.
 
 2. **H2 — Fotointerpretación**  
-   - Selecciona la alerta en el mapa (no solo en la tabla).  
-   - Paso 2: elige satélite (Sentinel-2 recomendado) y rango de fechas.  
-   - Paso 3: asigna escena **ANTES** y **DESPUÉS**.  
-   - Completa causa de deforestación y confianza en la tabla.  
-   - Paso 4: exporta imágenes HD al mapa y a `imagenes_sentinel/` (alimentan el PDF).
+   - Selecciona la alerta en el mapa.  
+   - Visor: Sentinel-2, escena ANTES y DESPUÉS, exporta si va a PDF.  
+   - En la tabla: causa y confianza.  
+   - **Recorta el polígono** a la forma real (Editor).
 
-3. **H3 — Reporte oficial**  
-   - Ejecuta **Diagnóstico Pre-Vuelo** (valida logos, GDB, Python).  
-   - **Generar Reporte ATD** con la misma alerta.  
-   - El PDF incluye mapa de contexto, imágenes satelitales con **polígono rojo** de la alerta, vista dinámica swipe y pie de página institucional.
+3. **H2 — Actualizar Superficie (ha)**  
+   Tras recortar: herramienta **Actualizar Superficie (ha) tras editar poligono**.  
+   Con los polígonos seleccionados → Run. El campo **Superficie** pasa a las hectáreas nuevas.
 
-4. **Entregables**  
+4. **H3 — Reporte oficial**  
+   Diagnóstico Pre-Vuelo y luego Generar Reporte ATD. H3 vuelve a leer la geometría, así el PDF no se queda con 0.09/0.54 viejos.
+
+5. **Entregables**  
    - `pdfs/RT-ATD-ACR-…pdf`  
    - `documentacion_atd/` (HTML swipe y metodología)
 
