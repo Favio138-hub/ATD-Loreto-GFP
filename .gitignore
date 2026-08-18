@@ -11,6 +11,8 @@ documentacion_atd/*
 !docs/
 !docs/EJEMPLO_reporte_ATD_Loreto.pdf
 !docs/EJEMPLO_reporte_ATD_Loreto.png
+!docs/EJEMPLO_reporte_ATD_Loreto_ACR10.pdf
+!docs/EJEMPLO_reporte_ATD_Loreto_ACR10.png
 
 # Mantener carpetas vacías
 !pdfs/.gitkeep

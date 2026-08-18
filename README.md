@@ -18,7 +18,8 @@
   <a href="#demo-taller-completo">Taller completo</a> ·
   <a href="#inicio-rápido">Inicio rápido</a> ·
   <a href="guia/GUIA_ATD_LORETO.html">Guía completa</a> ·
-  <a href="docs/EJEMPLO_reporte_ATD_Loreto.pdf">PDF de ejemplo</a>
+  <a href="docs/EJEMPLO_reporte_ATD_Loreto.pdf">PDF Ampiyacu</a> ·
+  <a href="docs/EJEMPLO_reporte_ATD_Loreto_ACR10.pdf">PDF Alto Nanay</a>
 </p>
 
 ---
@@ -59,7 +60,19 @@ Así se ve el **PDF institucional** que genera H3 (alerta `ACR09 - 2026 - 001`, 
 </p>
 
 <p align="center">
-  <a href="docs/EJEMPLO_reporte_ATD_Loreto.pdf"><strong>Descargar PDF de ejemplo</strong></a>
+  <a href="docs/EJEMPLO_reporte_ATD_Loreto.pdf"><strong>Descargar PDF Ampiyacu Apayacu</strong></a>
+</p>
+
+Así se ve el reporte de **Alto Nanay Pintuyacu Chambira** (alerta `ACR10 - 2026 - 064`): logo GORE Loreto, Actividad / Efecto y superficie en dos decimales.
+
+<p align="center">
+  <a href="docs/EJEMPLO_reporte_ATD_Loreto_ACR10.pdf">
+    <img src="docs/EJEMPLO_reporte_ATD_Loreto_ACR10.png" alt="Ejemplo de reporte ATD Loreto — ACR Alto Nanay Pintuyacu Chambira" width="820" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="docs/EJEMPLO_reporte_ATD_Loreto_ACR10.pdf"><strong>Descargar PDF Alto Nanay</strong></a>
 </p>
 
 ---
