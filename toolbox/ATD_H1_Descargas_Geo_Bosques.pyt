@@ -75,8 +75,9 @@ class Toolbox(object):
             "el periodo inicio/fin ahora SI filtra que alertas se insertan.\n\n"
             "Procesa ACRs (anp_codi) y Zonas de Influencia (zona_influencia).\n"
             "zi_codi permanece vacio; la ZI va en zona_influencia.\n\n"
-            "Si marca eliminar previos, borra solo el mismo periodo y las\n"
-            "ACR seleccionadas (no todo el año ni otras ACR).\n\n"
+            "Si marca reemplazar crudos, borra solo Geobosques sin clasificar\n"
+            "del mismo periodo y ACR. Nunca borra alertas ya fotointerpretadas\n"
+            "(con causa o confiabilidad).\n\n"
             "CAMPOS QUE LLENA:\n"
             "  anp_codi, zona_influencia, md_exa, ac_nomb, md_fuente=Landsat,\n"
             "  md_anno, md_sup (HA), md_este, md_norte,\n"
@@ -1234,7 +1235,10 @@ def _fecha_sql_gdb(d):
 
 
 def _where_eliminar_previos(fc_dest, anno, fecha_ini, fecha_fin, cods_acr):
-    """Borra solo año + periodo md_fecimg + ACR (no todo el año)."""
+    """Borra solo crudos Geobosques del año + periodo + ACR.
+
+    Nunca incluye alertas fotointerpretadas (md_conf o md_causa con valor).
+    """
     campos = _campos_map_fc(fc_dest)
     c_anno = campos.get("md_anno", "md_anno")
     parts = [f"{c_anno} = {int(anno)}"]
@@ -1256,6 +1260,14 @@ def _where_eliminar_previos(fc_dest, anno, fecha_ini, fecha_fin, cods_acr):
             + timedelta(days=1)
         )
         parts.append(f"{c_f} >= date '{fi}' AND {c_f} < date '{ff_excl}'")
+    # Solo pixels crudos: sin fotointerpretacion
+    crudos = []
+    if "md_conf" in campos:
+        crudos.append(f"{campos['md_conf']} IS NULL")
+    if "md_causa" in campos:
+        crudos.append(f"{campos['md_causa']} IS NULL")
+    if crudos:
+        parts.append("(" + " AND ".join(crudos) + ")")
     return " AND ".join(parts)
 
 
@@ -1347,7 +1359,8 @@ class InsertarAlertas(object):
             "MonitoreoDeforestacion (alertas del año en curso).\n\n"
             "Elige una o varias ACR: se corta esa ACR y su zona de influencia.\n"
             "El periodo filtra por fecha de imagen Geobosques (md_fecimg).\n\n"
-            "v5.9: filtro ACR+ZI y recorte real por fechas del periodo."
+            "v5.9: filtro ACR+ZI y recorte real por fechas del periodo.\n"
+            "Reemplazar crudos (opcional, desmarcado) no borra fotointerpretadas."
         )
         self.canRunInBackground = False
         self._h1_last_gdb = ""
@@ -1472,12 +1485,15 @@ class InsertarAlertas(object):
         p10.filter.list = ["Influen", "TipZona", "tipo", "anp_clase", "acr_codi", "CODOBJ"]
 
         p11 = arcpy.Parameter(
-            displayName="Eliminar registros previos del mismo periodo y ACR",
+            displayName=(
+                "Reemplazar solo alertas crudas del mismo periodo "
+                "(no borra las ya fotointerpretadas)"
+            ),
             name="eliminar_prev",
             datatype="GPBoolean",
             parameterType="Optional",
             direction="Input")
-        p11.value = True
+        p11.value = False
 
         return [p0, p_acr, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11]
 
@@ -1865,8 +1881,8 @@ class InsertarAlertas(object):
                     if cnt_del > 0:
                         arcpy.management.DeleteFeatures(lyr_del)
                         msg(
-                            f"   Eliminados: {cnt_del:,} registros "
-                            "(mismo año, periodo y ACR)"
+                            f"   Eliminados: {cnt_del:,} crudos Geobosques "
+                            "(fotointerpretadas intactas)"
                         )
                     else:
                         msg("   Sin registros previos del periodo/ACR")
