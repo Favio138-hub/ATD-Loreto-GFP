@@ -1740,6 +1740,14 @@ class GenerarReporteATD(object):
         GDB_PATH = parameters[ix["gdb"]].valueAsText
         _aplicar_region_desde_gdb(GDB_PATH, globals(), force=True)
         FC_ALERTAS = parameters[ix["fc_alertas"]].valueAsText
+        try:
+            from atd_superficie import actualizar_md_sup
+            n_sup = actualizar_md_sup(FC_ALERTAS)
+            arcpy.AddMessage(
+                f"  Superficie (ha) refrescada desde geometria: {n_sup}"
+            )
+        except Exception as ex_sup:
+            arcpy.AddWarning(f"  No se pudo refrescar md_sup: {ex_sup}")
         FC_ANP = parameters[ix["fc_anp"]].valueAsText
         FC_ZONIF = parameters[ix["fc_zonif"]].valueAsText
         FECHA_INI_REPORTE = parameters[ix["fecha_ini"]].valueAsText
