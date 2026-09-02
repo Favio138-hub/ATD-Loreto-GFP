@@ -5118,7 +5118,7 @@ class ActualizarSuperficie(object):
             "actual. Usar despues de recortar/editar la alerta (entre H2 y H3). "
             "Si hay seleccion, solo esas filas."
         )
-        sel  f.canRunInBackground = False
+        self.canRunInBackground = False
 
     def getParameterInfo(self):
         p0 = arcpy.Parameter(
